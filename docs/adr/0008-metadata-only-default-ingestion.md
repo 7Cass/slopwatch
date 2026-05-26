@@ -1,0 +1,3 @@
+# Metadata-only default ingestion
+
+Slopwatch stores Event metadata by default and does not store full prompts, responses, or file contents during normal collection. Full source text such as prompts or responses may be collected only through explicit content opt-in, and file contents remain out of scope for v0 even with that opt-in. Basic defensive redaction should be applied to metadata strings that commonly carry secrets, without promising strong ingestion-time redaction in v0. This limits local data accumulation and keeps privacy expectations clear, at the cost of a less rich dashboard when only metadata is available.
