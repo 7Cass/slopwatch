@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { serveStatic } from "hono/bun";
 
+import type { AgentDetailProvider } from "../agents/detail";
 import {
   buildNowProjection,
   type NowProjectionProvider,
@@ -9,6 +10,7 @@ import type { NowUpdateSource } from "./now-updates";
 
 export type ServerAppOptions = {
   nowProvider?: NowProjectionProvider;
+  agentDetailProvider?: AgentDetailProvider;
   nowUpdates?: NowUpdateSource;
   dashboardAssetsPath?: string;
 };
@@ -32,6 +34,17 @@ export function createServerApp(options: ServerAppOptions = {}) {
   );
 
   app.get("/api/now", async (context) => context.json(await nowProvider()));
+  app.get("/api/agents/:workUnitId", async (context) => {
+    const detail = await options.agentDetailProvider?.(
+      context.req.param("workUnitId"),
+    );
+
+    if (!detail) {
+      return context.json({ message: "Agent not found" }, 404);
+    }
+
+    return context.json(detail);
+  });
   app.get("/api/now/events", (context) =>
     createNowEventsResponse({
       nowProvider,

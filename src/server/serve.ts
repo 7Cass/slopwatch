@@ -1,4 +1,9 @@
 import { createServerApp } from "./app";
+import {
+  createAgentDetailProvider,
+  type AgentDetailProvider,
+} from "../agents/detail";
+import { createPostgresAgentDetailStore } from "../agents/postgres-store";
 import { runFixtureCollection } from "../collect/run";
 import type { RuntimeConfig } from "../config/runtime";
 import {
@@ -25,6 +30,7 @@ export type ServerOptions = {
   migrationChecker?: MigrationHealthChecker;
   collectionRunner?: CollectionRunner;
   nowProvider?: NowProjectionProvider;
+  agentDetailProvider?: AgentDetailProvider;
   pollIntervalMs?: number;
 };
 
@@ -55,6 +61,12 @@ export async function startServer(
       createNowProjectionProvider({
         databaseUrl: options.databaseUrl!,
         storeFactory: createPostgresNowProjectionStore,
+      }),
+    agentDetailProvider:
+      options.agentDetailProvider ??
+      createAgentDetailProvider({
+        databaseUrl: options.databaseUrl!,
+        storeFactory: createPostgresAgentDetailStore,
       }),
     nowUpdates,
   });

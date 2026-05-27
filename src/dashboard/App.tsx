@@ -1,6 +1,12 @@
-import { AlertTriangle, CircleCheck, CircleDot, OctagonX } from "lucide-react";
-import { useEffect, useState } from "react";
-import { Route, Routes } from "react-router-dom";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  CircleCheck,
+  CircleDot,
+  OctagonX,
+} from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Link, Route, Routes, useParams } from "react-router-dom";
 
 import { Badge, type BadgeProps } from "./components/ui/badge";
 import { Card, CardContent, CardHeader } from "./components/ui/card";
@@ -30,6 +36,46 @@ export type SerializedNowProjectionGroup = {
 export type SerializedNowProjection = {
   generatedAt: string;
   groups: SerializedNowProjectionGroup[];
+};
+
+export type SerializedAgentDetailEvent = {
+  id: string;
+  eventType: string;
+  observedAt: string;
+  action?: string;
+  command?: string;
+  filesTouched: string[];
+  error?: string;
+  source: {
+    sourceKey: string;
+    sourceType: string;
+    sourceLocator: string;
+    path?: string | null;
+  };
+  metadata: Record<string, unknown>;
+  rawPayload?: string | null;
+};
+
+export type SerializedAgentDetail = {
+  workUnitId: string;
+  project: {
+    displayName: string;
+    rootPath: string;
+  };
+  state: WorkUnitState;
+  activeTimeMs: number;
+  lastActivityAt: string;
+  inference: {
+    confidence: number;
+    explanation: string;
+    inferenceVersion: string;
+    calculatedAt: string;
+  };
+  forkOrigin?: {
+    sourceForkId: string;
+    originForkId?: string | null;
+  };
+  events: SerializedAgentDetailEvent[];
 };
 
 const groupLabels: Record<NowGroupKey, string> = {
@@ -71,14 +117,34 @@ const stateTone: Record<
   },
 };
 
+const workUnitStateLabels: Record<WorkUnitState, string> = {
+  active: "Active",
+  blocked: "Blocked",
+  failed: "Failed",
+  finished: "Finished",
+};
+
+const workUnitStateBadges: Record<WorkUnitState, BadgeProps["variant"]> = {
+  active: "default",
+  blocked: "warning",
+  failed: "danger",
+  finished: "success",
+};
+
 export function DashboardRoutes({
   initialProjection,
+  initialAgentDetails = [],
 }: {
   initialProjection?: SerializedNowProjection;
+  initialAgentDetails?: SerializedAgentDetail[];
 }) {
   return (
     <Routes>
       <Route path="/" element={<NowScreen projection={initialProjection} />} />
+      <Route
+        path="/agents/:workUnitId"
+        element={<AgentDetailScreen initialAgentDetails={initialAgentDetails} />}
+      />
       <Route path="*" element={<NowScreen projection={initialProjection} />} />
     </Routes>
   );
@@ -118,6 +184,145 @@ function NowScreen({
             ))}
           </div>
         )}
+      </div>
+    </main>
+  );
+}
+
+function AgentDetailScreen({
+  initialAgentDetails,
+}: {
+  initialAgentDetails: SerializedAgentDetail[];
+}) {
+  const { workUnitId: encodedWorkUnitId } = useParams();
+  const workUnitId = encodedWorkUnitId
+    ? decodeURIComponent(encodedWorkUnitId)
+    : "";
+  const [detail, setDetail] = useState<SerializedAgentDetail | undefined>(() =>
+    initialAgentDetails.find((candidate) => candidate.workUnitId === workUnitId),
+  );
+  const [status, setStatus] = useState<"loading" | "loaded" | "missing">(
+    detail ? "loaded" : "loading",
+  );
+
+  useEffect(() => {
+    if (!workUnitId || detail?.workUnitId === workUnitId) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setStatus("loading");
+
+    fetch(`/api/agents/${encodeURIComponent(workUnitId)}`)
+      .then(async (response) => {
+        if (response.status === 404) {
+          return null;
+        }
+
+        if (!response.ok) {
+          throw new Error(`Failed to load Agent detail: ${response.status}`);
+        }
+
+        return (await response.json()) as SerializedAgentDetail;
+      })
+      .then((loadedDetail) => {
+        if (cancelled) {
+          return;
+        }
+
+        setDetail(loadedDetail ?? undefined);
+        setStatus(loadedDetail ? "loaded" : "missing");
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStatus("missing");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [detail?.workUnitId, workUnitId]);
+
+  if (!detail) {
+    return (
+      <main className="min-h-screen bg-slate-50 text-slate-950">
+        <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+          <BackToNowLink />
+          <div className="rounded-lg border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+            <p className="text-sm font-medium text-slate-700">
+              {status === "loading" ? "Loading Agent detail" : "Agent not found"}
+            </p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-slate-50 text-slate-950">
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <BackToNowLink />
+
+        <header className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-slate-500">Agent detail</p>
+            <h1 className="truncate text-2xl font-semibold tracking-normal text-slate-950">
+              {detail.project.displayName}
+            </h1>
+            <p className="mt-1 truncate text-sm text-slate-500">
+              {detail.project.rootPath}
+            </p>
+          </div>
+          <Badge variant={workUnitStateBadges[detail.state]}>
+            {workUnitStateLabels[detail.state]}
+          </Badge>
+        </header>
+
+        <dl className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 sm:grid-cols-3">
+          <Metric
+            label="Last activity"
+            value={formatTimestamp(detail.lastActivityAt)}
+          />
+          <Metric
+            label="Active time"
+            value={`${formatDuration(detail.activeTimeMs)} active`}
+          />
+          <Metric
+            label="Inference"
+            value={`${formatConfidence(detail.inference.confidence)} confidence`}
+          />
+        </dl>
+
+        <section className="space-y-2">
+          <h2 className="text-base font-semibold text-slate-950">Inference</h2>
+          <div className="rounded-lg border border-slate-200 bg-white p-4">
+            <p className="text-sm font-medium text-slate-900">
+              {formatConfidence(detail.inference.confidence)} confidence
+            </p>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              {detail.inference.explanation}
+            </p>
+            <p className="mt-3 text-xs text-slate-500">
+              {detail.inference.inferenceVersion} calculated{" "}
+              {formatTimestamp(detail.inference.calculatedAt)}
+            </p>
+          </div>
+        </section>
+
+        {detail.forkOrigin ? <ForkOriginPanel fork={detail.forkOrigin} /> : null}
+
+        <section className="space-y-3">
+          <h2 className="text-base font-semibold text-slate-950">Timeline</h2>
+          <ol className="space-y-3">
+            {detail.events.map((event) => (
+              <AgentDetailTimelineItem key={event.id} event={event} />
+            ))}
+          </ol>
+        </section>
+
+        <RawPayloadPanel events={detail.events} />
       </div>
     </main>
   );
@@ -168,29 +373,192 @@ function AgentCard({
   groupKey: NowGroupKey;
 }) {
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="truncate text-sm font-semibold text-slate-950">
-              {agent.project.displayName}
-            </h3>
-            <p className="mt-1 line-clamp-2 text-sm text-slate-600">
-              {agent.lastAction ?? "No recent action"}
-            </p>
+    <Link
+      to={`/agents/${encodeURIComponent(agent.workUnitId)}`}
+      className="block rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2"
+    >
+      <Card className="transition hover:border-slate-300 hover:shadow-md">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-semibold text-slate-950">
+                {agent.project.displayName}
+              </h3>
+              <p className="mt-1 line-clamp-2 text-sm text-slate-600">
+                {agent.lastAction ?? "No recent action"}
+              </p>
+            </div>
+            <Badge variant={stateTone[groupKey].badge}>
+              {groupLabels[groupKey]}
+            </Badge>
           </div>
-          <Badge variant={stateTone[groupKey].badge}>{groupLabels[groupKey]}</Badge>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-500">
+            <Metric
+              label="Last activity"
+              value={formatRelative(agent.lastActivityAt)}
+            />
+            <Metric
+              label="Active time"
+              value={`${formatDuration(agent.activeTimeMs)} active`}
+            />
+            <Metric label="Tool calls" value={formatToolCalls(agent.toolCalls)} />
+            <Metric
+              label="Tokens"
+              value={formatTokenQuality(agent.tokenQuality)}
+            />
+          </dl>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+function BackToNowLink() {
+  return (
+    <Link
+      to="/"
+      className="inline-flex w-fit items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-950"
+    >
+      <ArrowLeft aria-hidden="true" className="h-4 w-4" />
+      Now
+    </Link>
+  );
+}
+
+function ForkOriginPanel({
+  fork,
+}: {
+  fork: NonNullable<SerializedAgentDetail["forkOrigin"]>;
+}) {
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <h2 className="text-base font-semibold text-slate-950">Fork origin</h2>
+      <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+        <Metric label="Fork" value={fork.sourceForkId} />
+        <Metric
+          label="Origin"
+          value={fork.originForkId ?? "Origin not recorded"}
+        />
+      </dl>
+    </section>
+  );
+}
+
+function AgentDetailTimelineItem({
+  event,
+}: {
+  event: SerializedAgentDetailEvent;
+}) {
+  const metadataEntries = Object.entries(event.metadata).filter(
+    ([, value]) => value !== undefined && value !== null,
+  );
+
+  return (
+    <li>
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-normal text-slate-500">
+                {formatTimestamp(event.observedAt)}
+              </p>
+              <h3 className="mt-1 text-sm font-semibold text-slate-950">
+                {event.action ?? event.eventType}
+              </h3>
+            </div>
+            <Badge variant={event.eventType === "error" ? "danger" : "muted"}>
+              {event.eventType}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid gap-3 text-sm text-slate-600">
+            {event.command ? (
+              <DetailRow label="Command" value={<code>{event.command}</code>} />
+            ) : null}
+            {event.filesTouched.length > 0 ? (
+              <DetailRow
+                label="Files touched"
+                value={event.filesTouched.join(", ")}
+              />
+            ) : null}
+            {event.error ? <DetailRow label="Error" value={event.error} /> : null}
+            <DetailRow
+              label="Source"
+              value={`${event.source.sourceKey} / ${event.source.sourceLocator}`}
+            />
+            {metadataEntries.length > 0 ? (
+              <DetailRow
+                label="Metadata"
+                value={metadataEntries
+                  .map(
+                    ([key, value]) =>
+                      `${formatMetadataKey(key)} ${formatMetadataValue(value)}`,
+                  )
+                  .join(", ")}
+              />
+            ) : null}
+          </dl>
+        </CardContent>
+      </Card>
+    </li>
+  );
+}
+
+function DetailRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="min-w-0">
+      <dt className="text-xs font-medium text-slate-500">{label}</dt>
+      <dd className="mt-1 break-words text-slate-800">{value}</dd>
+    </div>
+  );
+}
+
+function RawPayloadPanel({ events }: { events: SerializedAgentDetailEvent[] }) {
+  const [showRawPayload, setShowRawPayload] = useState(false);
+  const rawPayloadEvents = events.filter((event) => event.rawPayload);
+
+  if (rawPayloadEvents.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-slate-950">
+            Raw payload
+          </h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Available for {rawPayloadEvents.length} Event
+            {rawPayloadEvents.length === 1 ? "" : "s"}.
+          </p>
         </div>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-xs text-slate-500">
-          <Metric label="Last activity" value={formatRelative(agent.lastActivityAt)} />
-          <Metric label="Active time" value={`${formatDuration(agent.activeTimeMs)} active`} />
-          <Metric label="Tool calls" value={formatToolCalls(agent.toolCalls)} />
-          <Metric label="Tokens" value={formatTokenQuality(agent.tokenQuality)} />
-        </dl>
-      </CardContent>
-    </Card>
+        <button
+          type="button"
+          aria-expanded={showRawPayload}
+          onClick={() => setShowRawPayload((current) => !current)}
+          className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-sm font-medium text-slate-700 hover:bg-slate-50"
+        >
+          {showRawPayload ? "Hide Raw payload" : "Show Raw payload"}
+        </button>
+      </div>
+
+      {showRawPayload ? (
+        <div className="mt-4 space-y-3">
+          {rawPayloadEvents.map((event) => (
+            <pre
+              key={event.id}
+              className="max-h-80 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-50"
+            >
+              {event.rawPayload}
+            </pre>
+          ))}
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -221,6 +589,28 @@ function formatTimestamp(value?: string) {
     minute: "2-digit",
     second: "2-digit",
   }).format(new Date(value));
+}
+
+function formatConfidence(confidence: number) {
+  return `${Math.round(confidence * 100)}%`;
+}
+
+function formatMetadataKey(key: string) {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/^./, (character) => character.toUpperCase());
+}
+
+function formatMetadataValue(value: unknown) {
+  if (typeof value === "string" || typeof value === "number") {
+    return String(value);
+  }
+
+  if (typeof value === "boolean") {
+    return value ? "true" : "false";
+  }
+
+  return JSON.stringify(value);
 }
 
 function formatRelative(value: string) {

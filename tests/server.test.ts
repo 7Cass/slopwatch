@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import type { AgentDetail } from "../src/agents/detail";
 import { buildNowProjection } from "../src/now/projection";
 import { createServerApp } from "../src/server/app";
 import { createNowUpdateBus } from "../src/server/now-updates";
@@ -122,6 +123,49 @@ function projectionForAgent(workUnitId: string) {
   });
 }
 
+function detailForAgent(workUnitId: string): AgentDetail {
+  return {
+    workUnitId,
+    project: {
+      displayName: "slopwatch-demo",
+      rootPath: "/projects/slopwatch-demo",
+    },
+    state: "active",
+    activeTimeMs: 4 * 60 * 1000,
+    lastActivityAt: "2026-05-01T10:04:00.000Z",
+    inference: {
+      confidence: 0.82,
+      explanation: "Derived from recent tool and message Events.",
+      inferenceVersion: "work-unit-inference-v1",
+      calculatedAt: "2026-05-01T10:05:00.000Z",
+    },
+    forkOrigin: {
+      sourceForkId: "fork-main",
+      originForkId: "fork-root",
+    },
+    events: [
+      {
+        id: "event-1",
+        eventType: "tool_call",
+        observedAt: "2026-05-01T10:02:00.000Z",
+        action: "ran command",
+        command: "bun test",
+        filesTouched: ["src/dashboard/App.tsx"],
+        source: {
+          sourceKey: "fixture:codex-local-demo",
+          sourceType: "fixture",
+          sourceLocator: "fixture/codex-local-demo/session-001/fork-main/0002",
+        },
+        metadata: {
+          toolCalls: 1,
+          tokenQuality: "estimated",
+        },
+        rawPayload: null,
+      },
+    ],
+  };
+}
+
 test("server starts on localhost and answers the health endpoint", async () => {
   const port = await getAvailablePort();
   const server = await startServer({
@@ -195,6 +239,42 @@ test("server exposes the shared Now projection through the API", async () => {
       },
     ],
   });
+});
+
+test("server exposes Agent detail through the API", async () => {
+  const app = createServerApp({
+    agentDetailProvider: async (workUnitId) =>
+      workUnitId === "work-unit-1" ? detailForAgent(workUnitId) : null,
+  });
+
+  const response = await app.request("/api/agents/work-unit-1");
+  const missing = await app.request("/api/agents/missing-work-unit");
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toMatchObject({
+    workUnitId: "work-unit-1",
+    project: {
+      displayName: "slopwatch-demo",
+    },
+    inference: {
+      confidence: 0.82,
+      explanation: "Derived from recent tool and message Events.",
+    },
+    forkOrigin: {
+      originForkId: "fork-root",
+    },
+    events: [
+      {
+        eventType: "tool_call",
+        command: "bun test",
+        filesTouched: ["src/dashboard/App.tsx"],
+        source: {
+          sourceLocator: "fixture/codex-local-demo/session-001/fork-main/0002",
+        },
+      },
+    ],
+  });
+  expect(missing.status).toBe(404);
 });
 
 test("server serves the built dashboard and preserves API 404s", async () => {
