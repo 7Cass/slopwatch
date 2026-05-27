@@ -1,6 +1,8 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 
+import { resolveRuntimeConfig } from "./config/runtime";
+import { runDatabaseMigrations } from "./db/migrations";
 import { startServer } from "./server/serve";
 
 function scaffoldAction(commandName: string) {
@@ -32,22 +34,53 @@ function buildProgram() {
   const db = program.command("db").description("Manage Slopwatch-owned state.");
   db.command("migrate")
     .description("Apply explicit database migrations.")
-    .action(scaffoldAction("db migrate"));
+    .option("--database-url <url>", "Postgres connection URL.")
+    .action(async (options: { databaseUrl?: string }) => {
+      try {
+        await runDatabaseMigrations({
+          config: resolveRuntimeConfig({
+            env: Bun.env,
+            flags: { databaseUrl: options.databaseUrl },
+          }),
+        });
+        console.log("Database migrations applied.");
+      } catch (error) {
+        console.error(formatCliError(error));
+        process.exitCode = 1;
+      }
+    });
 
   program
     .command("serve")
     .description("Start the local Slopwatch API and dashboard server.")
     .option("--host <host>", "Host to bind.", "127.0.0.1")
     .option("--port <port>", "Port to bind.", "4317")
+    .option("--database-url <url>", "Postgres connection URL.")
     .option("--open", "Open the dashboard URL after startup.")
-    .action((options: { host: string; port: string }) => {
-      const server = startServer({
-        host: options.host,
-        port: Number.parseInt(options.port, 10),
-      });
+    .action(
+      async (options: {
+        host: string;
+        port: string;
+        databaseUrl?: string;
+      }) => {
+        try {
+          const config = resolveRuntimeConfig({
+            env: Bun.env,
+            flags: { databaseUrl: options.databaseUrl },
+          });
+          const server = await startServer({
+            host: options.host,
+            port: Number.parseInt(options.port, 10),
+            databaseUrl: config.databaseUrl,
+          });
 
-      console.log(`Slopwatch listening on ${server.url}`);
-    });
+          console.log(`Slopwatch listening on ${server.url}`);
+        } catch (error) {
+          console.error(formatCliError(error));
+          process.exitCode = 1;
+        }
+      },
+    );
 
   program
     .command("collect")
@@ -72,6 +105,14 @@ function buildProgram() {
     .action(scaffoldAction("purge"));
 
   return program;
+}
+
+function formatCliError(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  return String(error);
 }
 
 await buildProgram().parseAsync();

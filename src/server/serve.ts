@@ -1,8 +1,14 @@
 import { createServerApp } from "./app";
+import {
+  assertDatabaseReady,
+  type MigrationHealthChecker,
+} from "../db/health";
 
 export type ServerOptions = {
   host?: string;
   port?: number;
+  databaseUrl?: string;
+  migrationChecker?: MigrationHealthChecker;
 };
 
 export type RunningServer = {
@@ -10,8 +16,16 @@ export type RunningServer = {
   stop: () => Promise<void>;
 };
 
-export function startServer(options: ServerOptions = {}): RunningServer {
+export async function startServer(
+  options: ServerOptions = {},
+): Promise<RunningServer> {
   const host = options.host ?? "127.0.0.1";
+
+  await assertDatabaseReady({
+    config: { databaseUrl: options.databaseUrl },
+    checker: options.migrationChecker,
+  });
+
   const app = createServerApp();
   const server = Bun.serve({
     fetch: app.fetch,

@@ -2,11 +2,29 @@ import { expect, test } from "bun:test";
 
 const cliPath = new URL("../src/cli.ts", import.meta.url).pathname;
 
-async function runCli(args: string[]) {
+async function runCli(
+  args: string[],
+  envOverrides: Record<string, string | undefined> = {},
+) {
+  const env: Record<string, string | undefined> = {
+    ...Bun.env,
+    NO_COLOR: "1",
+  };
+  delete env.DATABASE_URL;
+
+  for (const [key, value] of Object.entries(envOverrides)) {
+    if (value === undefined) {
+      delete env[key];
+      continue;
+    }
+
+    env[key] = value;
+  }
+
   const proc = Bun.spawn(["bun", "run", cliPath, ...args], {
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...Bun.env, NO_COLOR: "1" },
+    env,
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([
@@ -36,4 +54,12 @@ test("slopwatch CLI exposes the planned v0 command surface", async () => {
   ]) {
     expect(result.stdout).toContain(command);
   }
+});
+
+test("db migrate requires DATABASE_URL before applying migrations", async () => {
+  const result = await runCli(["db", "migrate"]);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("DATABASE_URL is required");
+  expect(result.stderr).toContain("--database-url");
 });
