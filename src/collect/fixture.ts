@@ -1,4 +1,10 @@
-export type JsonMetadata = Record<string, unknown>;
+import {
+  applyEventDataPolicy,
+  type EventMetadata,
+  type RawPayloadKind,
+} from "./data-policy";
+
+export type JsonMetadata = EventMetadata;
 
 export type StoredSource = {
   id: string;
@@ -82,7 +88,9 @@ export type SourceRecord = {
   event: Omit<
     StoredEvent,
     "id" | "sourceId" | "projectId" | "sessionId" | "forkId" | "workUnitId"
-  >;
+  > & {
+    rawPayloadKind?: RawPayloadKind;
+  };
 };
 
 export type FixtureCollectionSummary = {
@@ -99,18 +107,26 @@ const lastObservedAt = new Date("2026-05-01T10:04:00.000Z");
 
 export async function collectFixtureSource({
   store,
+  includeContent = false,
 }: {
   store: CollectionStore;
+  includeContent?: boolean;
 }): Promise<FixtureCollectionSummary> {
-  return collectSourceRecords({ store, records: readFixtureSourceRecords() });
+  return collectSourceRecords({
+    store,
+    records: readFixtureSourceRecords(),
+    includeContent,
+  });
 }
 
 export async function collectSourceRecords({
   store,
   records,
+  includeContent = false,
 }: {
   store: CollectionStore;
   records: SourceRecord[];
+  includeContent?: boolean;
 }): Promise<FixtureCollectionSummary> {
   const processedWorkUnits = new Set<string>();
 
@@ -133,8 +149,13 @@ export async function collectSourceRecords({
       forkId: fork.id,
     });
 
+    const eventData = applyEventDataPolicy(record.event, { includeContent });
+    const { rawPayloadKind: _rawPayloadKind, ...event } = record.event;
+
     await store.upsertEvent({
-      ...record.event,
+      ...event,
+      metadata: eventData.metadata,
+      rawPayload: eventData.rawPayload,
       sourceId: source.id,
       projectId: project.id,
       sessionId: session.id,

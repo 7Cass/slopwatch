@@ -105,6 +105,16 @@ class InMemoryCollectionStore implements CollectionStore {
   }
 }
 
+function firstFixtureRecord() {
+  const [record] = readFixtureSourceRecords();
+
+  if (!record) {
+    throw new Error("Fixture Source should provide at least one record.");
+  }
+
+  return record;
+}
+
 describe("fixture collection", () => {
   test("writes deterministic fixture Events and domain identity", async () => {
     const store = new InMemoryCollectionStore();
@@ -176,6 +186,144 @@ describe("fixture collection", () => {
     });
     expect(updatedEvent?.parserVersion).toBe("fixture-parser-v2");
     expect(updatedEvent?.sourceVersion).toBe("fixture-v1");
+  });
+
+  test("stores metadata only by default without prompt, response, Raw payload, or file contents", async () => {
+    const store = new InMemoryCollectionStore();
+    const record = firstFixtureRecord();
+
+    await collectSourceRecords({
+      store,
+      records: [
+        {
+          ...record,
+          event: {
+            ...record.event,
+            metadata: {
+              action: "processed source text",
+              promptText: "Please inspect this private request.",
+              responseText: "Here is a private answer.",
+              fileContent: "export const secret = 'source file body';",
+              filePath: "/projects/slopwatch-demo/src/private.ts",
+            },
+            rawPayload: "full prompt and response transcript",
+          },
+        },
+      ],
+    });
+
+    const [event] = [...store.events.values()];
+
+    expect(event?.rawPayload).toBeNull();
+    expect(event?.metadata).toEqual({
+      action: "processed source text",
+      filePath: "/projects/slopwatch-demo/src/private.ts",
+    });
+  });
+
+  test("stores Raw payload only when content collection is explicitly enabled", async () => {
+    const store = new InMemoryCollectionStore();
+    const record = firstFixtureRecord();
+
+    await collectSourceRecords({
+      store,
+      includeContent: true,
+      records: [
+        {
+          ...record,
+          event: {
+            ...record.event,
+            metadata: {
+              action: "assistant responded",
+            },
+            rawPayload: "full assistant response text",
+          },
+        },
+      ],
+    });
+
+    const [event] = [...store.events.values()];
+
+    expect(event?.metadata).toEqual({
+      action: "assistant responded",
+    });
+    expect(event?.rawPayload).toBe("full assistant response text");
+  });
+
+  test("keeps file contents out of persisted Events even when content collection is enabled", async () => {
+    const store = new InMemoryCollectionStore();
+    const record = firstFixtureRecord();
+
+    await collectSourceRecords({
+      store,
+      includeContent: true,
+      records: [
+        {
+          ...record,
+          event: {
+            ...record.event,
+            metadata: {
+              action: "read file",
+              filesTouched: 1,
+              patch: "@@ export const privateValue = 'source body';",
+              fileContent: "export const privateValue = 'source body';",
+            },
+            rawPayload: "export const privateValue = 'source body';",
+            rawPayloadKind: "file_content",
+          },
+        },
+      ],
+    });
+
+    const [event] = [...store.events.values()];
+
+    expect(event?.rawPayload).toBeNull();
+    expect(event?.metadata).toEqual({
+      action: "read file",
+      filesTouched: 1,
+    });
+  });
+
+  test("redacts secret-shaped command and metadata strings before persistence", async () => {
+    const store = new InMemoryCollectionStore();
+    const record = firstFixtureRecord();
+
+    await collectSourceRecords({
+      store,
+      records: [
+        {
+          ...record,
+          event: {
+            ...record.event,
+            metadata: {
+              action: "ran command",
+              command:
+                "OPENAI_API_KEY=sk-live-secret curl -H 'Authorization: Bearer bearer-secret'",
+              token: "ghp_token_secret",
+              headers: {
+                authorization: "Bearer nested-secret",
+              },
+              env: ["ANTHROPIC_API_KEY=sk-ant-secret"],
+              tokenQuality: "unavailable",
+            },
+          },
+        },
+      ],
+    });
+
+    const [event] = [...store.events.values()];
+
+    expect(event?.metadata).toEqual({
+      action: "ran command",
+      command:
+        "OPENAI_API_KEY=[REDACTED] curl -H 'Authorization: Bearer [REDACTED]'",
+      token: "[REDACTED]",
+      headers: {
+        authorization: "[REDACTED]",
+      },
+      env: ["ANTHROPIC_API_KEY=[REDACTED]"],
+      tokenQuality: "unavailable",
+    });
   });
 
   test("fixture collection runner requires and uses the configured DATABASE_URL", async () => {

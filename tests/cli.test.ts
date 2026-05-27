@@ -71,3 +71,10 @@ test("collect --fixture requires DATABASE_URL before collecting", async () => {
   expect(result.stderr).toContain("DATABASE_URL is required");
   expect(result.stderr).toContain("--database-url");
 });
+
+test("collect exposes an explicit Raw payload opt-in", async () => {
+  const result = await runCli(["collect", "--help"]);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("--include-content");
+});

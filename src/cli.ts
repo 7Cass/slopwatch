@@ -87,29 +87,40 @@ function buildProgram() {
     .command("collect")
     .description("Collect Events from configured Sources.")
     .option("--fixture", "Collect from the deterministic fixture Source.")
+    .option(
+      "--include-content",
+      "Store Raw payload when the Source provides opt-in source text.",
+    )
     .option("--database-url <url>", "Postgres connection URL.")
-    .action(async (options: { fixture?: boolean; databaseUrl?: string }) => {
-      if (!options.fixture) {
-        scaffoldAction("collect")();
-        return;
-      }
+    .action(
+      async (options: {
+        fixture?: boolean;
+        includeContent?: boolean;
+        databaseUrl?: string;
+      }) => {
+        if (!options.fixture) {
+          scaffoldAction("collect")();
+          return;
+        }
 
-      try {
-        const summary = await runFixtureCollection({
-          config: resolveRuntimeConfig({
-            env: Bun.env,
-            flags: { databaseUrl: options.databaseUrl },
-          }),
-        });
+        try {
+          const summary = await runFixtureCollection({
+            config: resolveRuntimeConfig({
+              env: Bun.env,
+              flags: { databaseUrl: options.databaseUrl },
+            }),
+            includeContent: options.includeContent ?? false,
+          });
 
-        console.log(
-          `Collected ${summary.eventsProcessed} fixture Events for ${summary.workUnitsProcessed} WorkUnit.`,
-        );
-      } catch (error) {
-        console.error(formatCliError(error));
-        process.exitCode = 1;
-      }
-    });
+          console.log(
+            `Collected ${summary.eventsProcessed} fixture Events for ${summary.workUnitsProcessed} WorkUnit.`,
+          );
+        } catch (error) {
+          console.error(formatCliError(error));
+          process.exitCode = 1;
+        }
+      },
+    );
 
   program
     .command("status")

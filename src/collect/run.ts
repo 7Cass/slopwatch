@@ -14,9 +14,11 @@ export type CollectionStoreFactory = (
 export async function runFixtureCollection({
   config,
   storeFactory = createPostgresCollectionStore,
+  includeContent = false,
 }: {
   config: RuntimeConfig;
   storeFactory?: CollectionStoreFactory;
+  includeContent?: boolean;
 }) {
   if (!config.databaseUrl) {
     throw new MissingDatabaseUrlError();
@@ -25,7 +27,7 @@ export async function runFixtureCollection({
   const store = storeFactory(config.databaseUrl);
 
   try {
-    return await collectFixtureSource({ store });
+    return await collectFixtureSource({ store, includeContent });
   } finally {
     await store.close?.();
   }
