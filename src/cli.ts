@@ -6,6 +6,10 @@ import { runInit } from "./admin/init";
 import { runPurge } from "./admin/purge";
 import { listSources } from "./admin/sources";
 import { runCodexLocalCollection, runFixtureCollection } from "./collect/run";
+import {
+  formatCollectionWindow,
+  parseCollectionWindow,
+} from "./collect/window";
 import { defaultUserConfigPath, readUserConfig } from "./config/local";
 import {
   resolveRuntimeConfig,
@@ -158,6 +162,10 @@ export function buildProgram() {
     .description("Collect Events from configured Sources.")
     .option("--fixture", "Collect from the deterministic fixture Source.")
     .option(
+      "--since <value>",
+      "Backfill Events since an ISO timestamp or a window like 30m, 2h, or 7d.",
+    )
+    .option(
       "--include-content",
       "Store Raw payload when the Source provides opt-in source text.",
     )
@@ -172,22 +180,25 @@ export function buildProgram() {
     .action(
       async (options: {
         fixture?: boolean;
+        since?: string;
         includeContent?: boolean;
         config?: string;
         databaseUrl?: string;
         source: string[];
       }) => {
         try {
+          const collectionWindow = parseCollectionWindow(options.since);
           const config = await resolveCommandConfig(options);
 
           if (!options.fixture) {
             const summary = await runCodexLocalCollection({
               config,
               includeContent: options.includeContent ?? false,
+              collectionWindow,
             });
 
             console.log(
-              `Collected ${summary.eventsProcessed} Events from ${summary.sourceKeys.length} Codex local Source${summary.sourceKeys.length === 1 ? "" : "s"}.`,
+              `Collected ${summary.eventsProcessed} Events from ${summary.sourceKeys.length} Codex local Source${summary.sourceKeys.length === 1 ? "" : "s"}${formatCollectionWindow(summary.collectionWindow)}.`,
             );
             return;
           }
@@ -195,10 +206,11 @@ export function buildProgram() {
           const summary = await runFixtureCollection({
             config,
             includeContent: options.includeContent ?? false,
+            collectionWindow,
           });
 
           console.log(
-            `Collected ${summary.eventsProcessed} fixture Events for ${summary.workUnitsProcessed} WorkUnit.`,
+            `Collected ${summary.eventsProcessed} fixture Events for ${summary.workUnitsProcessed} WorkUnit${formatCollectionWindow(summary.collectionWindow)}.`,
           );
         } catch (error) {
           console.error(formatCliError(error));

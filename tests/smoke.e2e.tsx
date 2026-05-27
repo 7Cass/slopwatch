@@ -76,6 +76,26 @@ test("smoke flow proves migrate, fixture collection, SSE, and dashboard renderin
       "Collected 3 fixture Events for 1 WorkUnit.",
     );
 
+    const backfill = await runCli(
+      [
+        "collect",
+        "--fixture",
+        "--since",
+        "2026-05-01T10:02:00.000Z",
+        "--database-url",
+        databaseUrl,
+      ],
+      env,
+    );
+
+    expect(backfill).toMatchObject({
+      exitCode: 0,
+      stderr: "",
+    });
+    expect(backfill.stdout).toContain(
+      "Collected 2 fixture Events for 1 WorkUnit since 2026-05-01T10:02:00.000Z.",
+    );
+
     const server = await startCliServer({ databaseUrl, env });
 
     try {

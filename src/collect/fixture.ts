@@ -3,6 +3,10 @@ import {
   type EventMetadata,
   type RawPayloadKind,
 } from "./data-policy";
+import {
+  isInsideCollectionWindow,
+  type CollectionWindow,
+} from "./window";
 
 export type JsonMetadata = EventMetadata;
 
@@ -98,6 +102,7 @@ export type FixtureCollectionSummary = {
   eventsProcessed: number;
   workUnitsProcessed: number;
   workUnitIds: string[];
+  collectionWindow?: CollectionWindow;
 };
 
 const fixtureSourceKey = "fixture:codex-local-demo";
@@ -109,14 +114,17 @@ const lastObservedAt = new Date("2026-05-01T10:04:00.000Z");
 export async function collectFixtureSource({
   store,
   includeContent = false,
+  collectionWindow,
 }: {
   store: CollectionStore;
   includeContent?: boolean;
+  collectionWindow?: CollectionWindow;
 }): Promise<FixtureCollectionSummary> {
   return collectSourceRecords({
     store,
     records: readFixtureSourceRecords(),
     includeContent,
+    collectionWindow,
   });
 }
 
@@ -124,15 +132,20 @@ export async function collectSourceRecords({
   store,
   records,
   includeContent = false,
+  collectionWindow,
 }: {
   store: CollectionStore;
   records: SourceRecord[];
   includeContent?: boolean;
+  collectionWindow?: CollectionWindow;
 }): Promise<FixtureCollectionSummary> {
   const processedWorkUnits = new Set<string>();
   const processedWorkUnitIds = new Set<string>();
+  const recordsInWindow = records.filter((record) =>
+    isInsideCollectionWindow(record.event.observedAt, collectionWindow),
+  );
 
-  for (const record of records) {
+  for (const record of recordsInWindow) {
     const source = await store.upsertSource(record.source);
     const project = await store.upsertProject(record.project);
     const session = await store.upsertSession({
@@ -171,9 +184,10 @@ export async function collectSourceRecords({
 
   return {
     sourceKey: records[0]?.source.sourceKey ?? fixtureSourceKey,
-    eventsProcessed: records.length,
+    eventsProcessed: recordsInWindow.length,
     workUnitsProcessed: processedWorkUnits.size,
     workUnitIds: [...processedWorkUnitIds],
+    collectionWindow,
   };
 }
 

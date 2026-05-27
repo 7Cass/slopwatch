@@ -15,6 +15,7 @@ import {
 import { listSources } from "../admin/sources";
 import { readCodexLocalSourceRecords } from "./codex-local";
 import { createPostgresCollectionStore } from "./postgres-store";
+import type { CollectionWindow } from "./window";
 
 export type CloseableCollectionStore = CollectionStore & {
   close?: () => Promise<void>;
@@ -43,6 +44,7 @@ export type CodexLocalCollectionSummary = {
   eventsProcessed: number;
   workUnitsProcessed: number;
   workUnitIds: string[];
+  collectionWindow?: CollectionWindow;
 };
 
 export async function runFixtureCollection({
@@ -50,11 +52,13 @@ export async function runFixtureCollection({
   storeFactory = createPostgresCollectionStore,
   inferenceStoreFactory = createPostgresInferenceStore,
   includeContent = false,
+  collectionWindow,
 }: {
   config: RuntimeConfig;
   storeFactory?: CollectionStoreFactory;
   inferenceStoreFactory?: InferenceStoreFactory;
   includeContent?: boolean;
+  collectionWindow?: CollectionWindow;
 }) {
   if (!config.databaseUrl) {
     throw new MissingDatabaseUrlError();
@@ -64,7 +68,11 @@ export async function runFixtureCollection({
   let inferenceStore: CloseableInferenceStore | undefined;
 
   try {
-    const summary = await collectFixtureSource({ store, includeContent });
+    const summary = await collectFixtureSource({
+      store,
+      includeContent,
+      collectionWindow,
+    });
     inferenceStore = inferenceStoreFactory(config.databaseUrl);
 
     for (const workUnitId of summary.workUnitIds) {
@@ -84,6 +92,7 @@ export async function runCodexLocalCollection({
   storeFactory = createPostgresCollectionStore,
   inferenceStoreFactory = createPostgresInferenceStore,
   includeContent = false,
+  collectionWindow,
   sourceList = listSources,
   sourceReader = readCodexLocalSourceRecords,
 }: {
@@ -92,6 +101,7 @@ export async function runCodexLocalCollection({
   storeFactory?: CollectionStoreFactory;
   inferenceStoreFactory?: InferenceStoreFactory;
   includeContent?: boolean;
+  collectionWindow?: CollectionWindow;
   sourceList?: typeof listSources;
   sourceReader?: CodexLocalSourceReader;
 }): Promise<CodexLocalCollectionSummary> {
@@ -115,7 +125,6 @@ export async function runCodexLocalCollection({
         source.format.status === "ok",
     );
     const workUnitIds = new Set<string>();
-    const workUnitKeys = new Set<string>();
     let eventsProcessed = 0;
 
     for (const source of sources) {
@@ -129,13 +138,11 @@ export async function runCodexLocalCollection({
         store,
         records,
         includeContent,
+        collectionWindow,
       });
 
       eventsProcessed += summary.eventsProcessed;
       summary.workUnitIds.forEach((workUnitId) => workUnitIds.add(workUnitId));
-      records.forEach((record) =>
-        workUnitKeys.add(record.workUnit.identityKey),
-      );
     }
 
     inferenceStore = inferenceStoreFactory(config.databaseUrl);
@@ -147,8 +154,9 @@ export async function runCodexLocalCollection({
     return {
       sourceKeys: sources.map((source) => source.sourceKey),
       eventsProcessed,
-      workUnitsProcessed: workUnitKeys.size,
+      workUnitsProcessed: workUnitIds.size,
       workUnitIds: [...workUnitIds],
+      collectionWindow,
     };
   } finally {
     await inferenceStore?.close?.();

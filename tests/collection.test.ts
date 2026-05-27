@@ -143,6 +143,41 @@ function firstFixtureRecord() {
   return record;
 }
 
+function codexCollectionConfig() {
+  return {
+    databaseUrl: "postgres://localhost/slopwatch_codex",
+    sources: [
+      {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: "/sources/configured-codex",
+      },
+    ],
+  };
+}
+
+async function configuredCodexSourceList(
+  input: {
+    config?: {
+      sources?: Array<{
+        sourceKey?: string;
+        sourceType: string;
+        path: string;
+      }>;
+    };
+  } = {},
+) {
+  return (input.config?.sources ?? []).map((source) => ({
+    sourceKey: source.sourceKey ?? `${source.sourceType}:${source.path}`,
+    sourceType: source.sourceType,
+    path: source.path,
+    origin: "configured" as const,
+    overridden: true,
+    health: { status: "ok" as const },
+    format: { status: "ok" as const },
+  }));
+}
+
 describe("collection", () => {
   test("writes deterministic fixture Events and domain identity", async () => {
     const store = new InMemoryCollectionStore();
@@ -221,6 +256,71 @@ describe("collection", () => {
     });
     expect(updatedEvent?.parserVersion).toBe("fixture-parser-v2");
     expect(updatedEvent?.sourceVersion).toBe("fixture-v1");
+  });
+
+  test("collects fixture Events inside a bounded window without duplicating Source locators", async () => {
+    const store = new InMemoryCollectionStore();
+    const records = readFixtureSourceRecords();
+    const collectionWindow = {
+      since: new Date("2026-05-01T10:02:00.000Z"),
+    };
+
+    const summary = await collectSourceRecords({
+      store,
+      records,
+      collectionWindow,
+    });
+    const firstEventIds = [...store.events.values()].map((event) => event.id);
+
+    expect(summary).toMatchObject({
+      sourceKey: "fixture:codex-local-demo",
+      eventsProcessed: 2,
+      workUnitsProcessed: 1,
+      collectionWindow,
+    });
+    expect([...store.events.values()].map((event) => event.sourceLocator)).toEqual(
+      [
+        "fixture/codex-local-demo/session-001/fork-main/0002",
+        "fixture/codex-local-demo/session-001/fork-main/0003",
+      ],
+    );
+
+    const changedRecords = records.map((record) =>
+      record.event.sourceLocator.endsWith("/0003")
+        ? {
+            ...record,
+            event: {
+              ...record.event,
+              metadata: {
+                ...record.event.metadata,
+                summary: "Backfill refreshed recent activity.",
+              },
+              parserVersion: "fixture-parser-v2",
+              sourceVersion: "fixture-v2",
+            },
+          }
+        : record,
+    );
+
+    await collectSourceRecords({
+      store,
+      records: changedRecords,
+      collectionWindow,
+    });
+
+    expect(store.events.size).toBe(2);
+    expect([...store.events.values()].map((event) => event.id)).toEqual(
+      firstEventIds,
+    );
+
+    const updatedEvent = [...store.events.values()].find((event) =>
+      event.sourceLocator.endsWith("/0003"),
+    );
+    expect(updatedEvent?.metadata).toMatchObject({
+      summary: "Backfill refreshed recent activity.",
+    });
+    expect(updatedEvent?.parserVersion).toBe("fixture-parser-v2");
+    expect(updatedEvent?.sourceVersion).toBe("fixture-v2");
   });
 
   test("stores metadata only by default without prompt, response, Raw payload, or file contents", async () => {
@@ -403,6 +503,35 @@ describe("collection", () => {
     expect(closed).toBe(true);
   });
 
+  test("fixture collection runner applies a backfill window before recalculating Inference", async () => {
+    const store = new InMemoryCollectionStore();
+    const collectionWindow = {
+      since: new Date("2026-05-01T10:04:00.000Z"),
+    };
+
+    const summary = await runFixtureCollection({
+      config: { databaseUrl: "postgres://localhost/slopwatch_fixture" },
+      collectionWindow,
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    expect(summary).toMatchObject({
+      eventsProcessed: 1,
+      workUnitsProcessed: 1,
+      collectionWindow,
+    });
+    expect([...store.events.values()].map((event) => event.sourceLocator)).toEqual(
+      ["fixture/codex-local-demo/session-001/fork-main/0003"],
+    );
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "active",
+        inferenceVersion: "work-unit-inference-v1",
+      },
+    ]);
+  });
+
   test("real Codex collection runner uses healthy Sources and the shared normalization path", async () => {
     await expect(
       runCodexLocalCollection({
@@ -436,30 +565,9 @@ describe("collection", () => {
     }));
 
     const summary = await runCodexLocalCollection({
-      config: {
-        databaseUrl: "postgres://localhost/slopwatch_codex",
-        sources: [
-          {
-            sourceKey: "codex-local:default",
-            sourceType: "codex-local",
-            path: "/sources/configured-codex",
-          },
-        ],
-      },
+      config: codexCollectionConfig(),
       env: { CODEX_HOME: "/sources/detected-codex" },
-      sourceList: async (input = {}) => {
-        const configuredSources = input.config?.sources ?? [];
-
-        return configuredSources.map((source) => ({
-          sourceKey: source.sourceKey ?? `${source.sourceType}:${source.path}`,
-          sourceType: source.sourceType,
-          path: source.path,
-          origin: "configured" as const,
-          overridden: true,
-          health: { status: "ok" as const },
-          format: { status: "ok" as const },
-        }));
-      },
+      sourceList: configuredCodexSourceList,
       sourceReader: async ({ source }) => {
         requestedSourcePaths.push(source.path);
 
@@ -500,5 +608,122 @@ describe("collection", () => {
       "postgres://localhost/slopwatch_codex",
     ]);
     expect(collectionStoreClosed).toBe(true);
+  });
+
+  test("real Codex backfill deduplicates Source locators and preserves Event versions", async () => {
+    const store = new InMemoryCollectionStore();
+    const collectionWindow = {
+      since: new Date("2026-05-01T10:02:00.000Z"),
+    };
+    let recordsVersion = 1;
+
+    const readRecords = () =>
+      readFixtureSourceRecords().map((record) => ({
+        ...record,
+        source: {
+          sourceKey: "codex-local:default",
+          sourceType: "codex-local",
+          path: "/sources/configured-codex",
+          healthStatus: "ok",
+        },
+        workUnit: {
+          ...record.workUnit,
+          identityKey: "codex-local:default:thread-main",
+        },
+        event: {
+          ...record.event,
+          sourceLocator: record.event.sourceLocator.replace(
+            "fixture/codex-local-demo/session-001/fork-main",
+            "sessions/2026/05/27/rollout-thread-main.jsonl",
+          ),
+          metadata: record.event.sourceLocator.endsWith("/0003")
+            ? {
+                ...record.event.metadata,
+                summary: `Backfilled Codex activity v${recordsVersion}.`,
+              }
+            : record.event.metadata,
+          parserVersion: `codex-local-v${recordsVersion}`,
+          sourceVersion: `0.134.${recordsVersion}`,
+        },
+      }));
+
+    const summary = await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      collectionWindow,
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => readRecords(),
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+    const firstEventIds = [...store.events.values()].map((event) => event.id);
+
+    expect(summary).toMatchObject({
+      sourceKeys: ["codex-local:default"],
+      eventsProcessed: 2,
+      workUnitsProcessed: 1,
+      collectionWindow,
+    });
+    expect([...store.events.values()].map((event) => event.sourceLocator)).toEqual(
+      [
+        "sessions/2026/05/27/rollout-thread-main.jsonl/0002",
+        "sessions/2026/05/27/rollout-thread-main.jsonl/0003",
+      ],
+    );
+
+    recordsVersion = 2;
+    await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      collectionWindow,
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => readRecords(),
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    expect(store.events.size).toBe(2);
+    expect([...store.events.values()].map((event) => event.id)).toEqual(
+      firstEventIds,
+    );
+
+    const updatedEvent = [...store.events.values()].find((event) =>
+      event.sourceLocator.endsWith("/0003"),
+    );
+    expect(updatedEvent?.metadata).toMatchObject({
+      summary: "Backfilled Codex activity v2.",
+    });
+    expect(updatedEvent?.parserVersion).toBe("codex-local-v2");
+    expect(updatedEvent?.sourceVersion).toBe("0.134.2");
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "active",
+        inferenceVersion: "work-unit-inference-v1",
+      },
+    ]);
+  });
+
+  test("real Codex backfill reports no affected WorkUnits when no Events match the window", async () => {
+    const store = new InMemoryCollectionStore();
+
+    const summary = await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      collectionWindow: {
+        since: new Date("2026-05-01T11:00:00.000Z"),
+      },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => readFixtureSourceRecords(),
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    expect(summary).toMatchObject({
+      eventsProcessed: 0,
+      workUnitsProcessed: 0,
+      workUnitIds: [],
+    });
+    expect(store.events.size).toBe(0);
+    expect(store.inferences.size).toBe(0);
   });
 });

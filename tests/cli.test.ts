@@ -132,7 +132,16 @@ test("collect exposes an explicit Raw payload opt-in", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("--include-content");
+  expect(result.stdout).toContain("--since <value>");
   expect(result.stdout).toContain("--source");
+});
+
+test("collect rejects unclear backfill windows", async () => {
+  const result = await runCli(["collect", "--fixture", "--since", "recently"]);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("Invalid --since value");
+  expect(result.stderr).toContain("Use an ISO timestamp or a window like 30m, 2h, or 7d");
 });
 
 test("init creates local config without copying DATABASE_URL secrets", async () => {
