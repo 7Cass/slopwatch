@@ -162,7 +162,8 @@ const sourcesFixture: SerializedSourcesHealth = {
       health: { status: "ok" },
       format: {
         status: "malformed",
-        message: "Codex local Source must contain sessions/ or history.jsonl.",
+        message:
+          "Codex local Source must contain state_5.sqlite and sessions/YYYY/MM/DD/rollout-*.jsonl.",
       },
     },
   ],
@@ -227,7 +228,7 @@ test("Sources route renders detected and overridden Source health", () => {
   expect(markup).toContain("malformed");
   expect(markup).toContain("Source path does not exist.");
   expect(markup).toContain(
-    "Codex local Source must contain sessions/ or history.jsonl.",
+    "Codex local Source must contain state_5.sqlite and sessions/YYYY/MM/DD/rollout-*.jsonl.",
   );
 });
 

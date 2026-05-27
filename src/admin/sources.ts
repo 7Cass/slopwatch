@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -173,9 +173,12 @@ async function checkSourceFormat(source: SourceConfig): Promise<SourceHealth> {
     };
   }
 
+  // v0 macOS Codex Sources are rooted at $CODEX_HOME, otherwise ~/.codex.
+  // The confirmed readable format is state_5.sqlite plus rollout JSONL files
+  // under sessions/YYYY/MM/DD/.
   if (
-    (await isDirectory(join(source.path, "sessions"))) ||
-    (await isFile(join(source.path, "history.jsonl")))
+    (await isFile(join(source.path, "state_5.sqlite"))) &&
+    (await containsRolloutJsonl(join(source.path, "sessions")))
   ) {
     return {
       status: "ok",
@@ -184,7 +187,8 @@ async function checkSourceFormat(source: SourceConfig): Promise<SourceHealth> {
 
   return {
     status: "malformed",
-    message: "Codex local Source must contain sessions/ or history.jsonl.",
+    message:
+      "Codex local Source must contain state_5.sqlite and sessions/YYYY/MM/DD/rollout-*.jsonl.",
   };
 }
 
@@ -213,6 +217,33 @@ async function isFile(path: string) {
   } catch {
     return false;
   }
+}
+
+async function containsRolloutJsonl(path: string): Promise<boolean> {
+  try {
+    const entries = await readdir(path, { withFileTypes: true });
+
+    for (const entry of entries) {
+      if (
+        entry.isFile() &&
+        entry.name.startsWith("rollout-") &&
+        entry.name.endsWith(".jsonl")
+      ) {
+        return true;
+      }
+
+      if (
+        entry.isDirectory() &&
+        (await containsRolloutJsonl(join(path, entry.name)))
+      ) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 function isNotFoundError(error: unknown) {

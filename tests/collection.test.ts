@@ -12,7 +12,10 @@ import {
   type StoredSource,
   type StoredWorkUnit,
 } from "../src/collect/fixture";
-import { runFixtureCollection } from "../src/collect/run";
+import {
+  runCodexLocalCollection,
+  runFixtureCollection,
+} from "../src/collect/run";
 import type {
   InferenceEvent,
   InferenceStore,
@@ -140,7 +143,7 @@ function firstFixtureRecord() {
   return record;
 }
 
-describe("fixture collection", () => {
+describe("collection", () => {
   test("writes deterministic fixture Events and domain identity", async () => {
     const store = new InMemoryCollectionStore();
 
@@ -398,5 +401,104 @@ describe("fixture collection", () => {
       },
     ]);
     expect(closed).toBe(true);
+  });
+
+  test("real Codex collection runner uses healthy Sources and the shared normalization path", async () => {
+    await expect(
+      runCodexLocalCollection({
+        config: {},
+        storeFactory: () => new InMemoryCollectionStore(),
+      }),
+    ).rejects.toThrow("DATABASE_URL is required");
+
+    const store = new InMemoryCollectionStore();
+    const databaseUrls: string[] = [];
+    const requestedSourcePaths: string[] = [];
+    let collectionStoreClosed = false;
+
+    const fixtureRecords = readFixtureSourceRecords().map((record) => ({
+      ...record,
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: "/sources/configured-codex",
+        healthStatus: "ok",
+      },
+      event: {
+        ...record.event,
+        sourceLocator: record.event.sourceLocator.replace(
+          "fixture/codex-local-demo",
+          "sessions/2026/05/27/rollout-thread-main.jsonl",
+        ),
+        parserVersion: "codex-local-v0",
+        sourceVersion: "0.134.0",
+      },
+    }));
+
+    const summary = await runCodexLocalCollection({
+      config: {
+        databaseUrl: "postgres://localhost/slopwatch_codex",
+        sources: [
+          {
+            sourceKey: "codex-local:default",
+            sourceType: "codex-local",
+            path: "/sources/configured-codex",
+          },
+        ],
+      },
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: async (input = {}) => {
+        const configuredSources = input.config?.sources ?? [];
+
+        return configuredSources.map((source) => ({
+          sourceKey: source.sourceKey ?? `${source.sourceType}:${source.path}`,
+          sourceType: source.sourceType,
+          path: source.path,
+          origin: "configured" as const,
+          overridden: true,
+          health: { status: "ok" as const },
+          format: { status: "ok" as const },
+        }));
+      },
+      sourceReader: async ({ source }) => {
+        requestedSourcePaths.push(source.path);
+
+        return fixtureRecords;
+      },
+      storeFactory: (databaseUrl) => {
+        databaseUrls.push(databaseUrl);
+
+        return Object.assign(store, {
+          close: async () => {
+            collectionStoreClosed = true;
+          },
+        });
+      },
+      inferenceStoreFactory: (databaseUrl) => {
+        databaseUrls.push(databaseUrl);
+
+        return store;
+      },
+    });
+
+    expect(summary).toMatchObject({
+      sourceKeys: ["codex-local:default"],
+      eventsProcessed: 3,
+      workUnitsProcessed: 1,
+    });
+    expect(requestedSourcePaths).toEqual(["/sources/configured-codex"]);
+    expect(store.sources.size).toBe(1);
+    expect(store.events.size).toBe(3);
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "active",
+        inferenceVersion: "work-unit-inference-v1",
+      },
+    ]);
+    expect(databaseUrls).toEqual([
+      "postgres://localhost/slopwatch_codex",
+      "postgres://localhost/slopwatch_codex",
+    ]);
+    expect(collectionStoreClosed).toBe(true);
   });
 });

@@ -5,7 +5,7 @@ import { runDoctor } from "./admin/doctor";
 import { runInit } from "./admin/init";
 import { runPurge } from "./admin/purge";
 import { listSources } from "./admin/sources";
-import { runFixtureCollection } from "./collect/run";
+import { runCodexLocalCollection, runFixtureCollection } from "./collect/run";
 import { defaultUserConfigPath, readUserConfig } from "./config/local";
 import {
   resolveRuntimeConfig,
@@ -163,21 +163,37 @@ export function buildProgram() {
     )
     .option("--config <path>", "User-local Slopwatch config path.")
     .option("--database-url <url>", "Postgres connection URL.")
+    .option(
+      "--source <path>",
+      "Codex local Source path override.",
+      collectValue,
+      [],
+    )
     .action(
       async (options: {
         fixture?: boolean;
         includeContent?: boolean;
         config?: string;
         databaseUrl?: string;
+        source: string[];
       }) => {
-        if (!options.fixture) {
-          scaffoldAction("collect")();
-          return;
-        }
-
         try {
+          const config = await resolveCommandConfig(options);
+
+          if (!options.fixture) {
+            const summary = await runCodexLocalCollection({
+              config,
+              includeContent: options.includeContent ?? false,
+            });
+
+            console.log(
+              `Collected ${summary.eventsProcessed} Events from ${summary.sourceKeys.length} Codex local Source${summary.sourceKeys.length === 1 ? "" : "s"}.`,
+            );
+            return;
+          }
+
           const summary = await runFixtureCollection({
-            config: await resolveCommandConfig(options),
+            config,
             includeContent: options.includeContent ?? false,
           });
 

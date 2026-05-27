@@ -8,6 +8,7 @@ import { MissingDatabaseUrlError } from "../src/db/migrations";
 import { runInit } from "../src/admin/init";
 import { runDoctor } from "../src/admin/doctor";
 import {
+  createCodexLocalSourceDetector,
   createLocalSourceHealthChecker,
   listSources,
 } from "../src/admin/sources";
@@ -184,6 +185,30 @@ describe("doctor", () => {
 });
 
 describe("sources", () => {
+  test("detects the v0 macOS Codex Source root from CODEX_HOME or HOME", async () => {
+    const detector = createCodexLocalSourceDetector();
+
+    await expect(
+      detector.detect({
+        CODEX_HOME: "/custom/codex-home",
+        HOME: "/users/jane",
+      }),
+    ).resolves.toEqual([
+      {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: "/custom/codex-home",
+      },
+    ]);
+    await expect(detector.detect({ HOME: "/users/jane" })).resolves.toEqual([
+      {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: "/users/jane/.codex",
+      },
+    ]);
+  });
+
   test("lists detected and configured Source overrides with health", async () => {
     const sources = await listSources({
       config: {
@@ -240,7 +265,7 @@ describe("sources", () => {
     ]);
   });
 
-  test("separates readable Source path health from Source format health", async () => {
+  test("separates readable Source path health from v0 Codex Source format health", async () => {
     const configPath = await tempConfigPath();
     const sourcePath = dirname(configPath);
     const checker = createLocalSourceHealthChecker();
@@ -255,11 +280,43 @@ describe("sources", () => {
       health: { status: "ok" },
       format: {
         status: "malformed",
-        message: "Codex local Source must contain sessions/ or history.jsonl.",
+        message:
+          "Codex local Source must contain state_5.sqlite and sessions/YYYY/MM/DD/rollout-*.jsonl.",
       },
     });
 
     await mkdir(join(sourcePath, "sessions"));
+
+    await expect(
+      checker.check({
+        sourceType: "codex-local",
+        path: sourcePath,
+      }),
+    ).resolves.toMatchObject({
+      health: { status: "ok" },
+      format: {
+        status: "malformed",
+        message:
+          "Codex local Source must contain state_5.sqlite and sessions/YYYY/MM/DD/rollout-*.jsonl.",
+      },
+    });
+
+    await writeFile(join(sourcePath, "state_5.sqlite"), "");
+    await mkdir(join(sourcePath, "sessions", "2026", "05", "27"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(
+        sourcePath,
+        "sessions",
+        "2026",
+        "05",
+        "27",
+        "rollout-2026-05-27T10-00-00-thread-001.jsonl",
+      ),
+      "",
+      "utf8",
+    );
 
     await expect(
       checker.check({

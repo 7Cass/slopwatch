@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -15,6 +15,25 @@ async function tempPath(...segments: string[]) {
   tmpRoots.push(root);
 
   return join(root, ...segments);
+}
+
+async function writeHealthyCodexSource(sourcePath: string) {
+  await mkdir(join(sourcePath, "sessions", "2026", "05", "27"), {
+    recursive: true,
+  });
+  await writeFile(join(sourcePath, "state_5.sqlite"), "");
+  await writeFile(
+    join(
+      sourcePath,
+      "sessions",
+      "2026",
+      "05",
+      "27",
+      "rollout-2026-05-27T10-00-00-thread-main.jsonl",
+    ),
+    "",
+    "utf8",
+  );
 }
 
 afterEach(async () => {
@@ -96,11 +115,24 @@ test("collect --fixture requires DATABASE_URL before collecting", async () => {
   expect(result.stderr).toContain("--database-url");
 });
 
+test("collect accepts Source overrides for real Codex collection", async () => {
+  const sourcePath = await tempPath("codex-source");
+  const result = await runCli(["collect", "--source", sourcePath]);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("DATABASE_URL is required");
+  expect(result.stderr).toContain("--database-url");
+  expect(result.stdout).not.toContain(
+    "collect is part of the Slopwatch v0 scaffold",
+  );
+});
+
 test("collect exposes an explicit Raw payload opt-in", async () => {
   const result = await runCli(["collect", "--help"]);
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("--include-content");
+  expect(result.stdout).toContain("--source");
 });
 
 test("init creates local config without copying DATABASE_URL secrets", async () => {
@@ -119,8 +151,8 @@ test("init creates local config without copying DATABASE_URL secrets", async () 
 test("sources lists Source overrides with health", async () => {
   const detectedPath = await tempPath("detected-codex-source");
   const sourcePath = await tempPath("override-codex-source");
-  await mkdir(join(detectedPath, "sessions"), { recursive: true });
-  await mkdir(join(sourcePath, "sessions"), { recursive: true });
+  await writeHealthyCodexSource(detectedPath);
+  await writeHealthyCodexSource(sourcePath);
 
   const result = await runCli(["sources", "--source", sourcePath], {
     CODEX_HOME: detectedPath,

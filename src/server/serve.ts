@@ -4,7 +4,7 @@ import {
   type AgentDetailProvider,
 } from "../agents/detail";
 import { createPostgresAgentDetailStore } from "../agents/postgres-store";
-import { runFixtureCollection } from "../collect/run";
+import { runCodexLocalCollection } from "../collect/run";
 import type { RuntimeConfig } from "../config/runtime";
 import {
   assertDatabaseReady,
@@ -58,7 +58,7 @@ export async function startServer(
 ): Promise<RunningServer> {
   const host = options.host ?? "127.0.0.1";
   const config = options.config ?? { databaseUrl: options.databaseUrl };
-  const collectionRunner = options.collectionRunner ?? runFixtureCollection;
+  const collectionRunner = options.collectionRunner ?? runCodexLocalCollection;
 
   await assertDatabaseReady({
     config,
