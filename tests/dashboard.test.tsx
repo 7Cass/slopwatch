@@ -6,6 +6,8 @@ import {
   DashboardRoutes,
   type SerializedAgentDetail,
   type SerializedNowProjection,
+  type SerializedProjectsOverview,
+  type SerializedSourcesHealth,
 } from "../src/dashboard/App";
 
 const nowFixture: SerializedNowProjection = {
@@ -103,6 +105,69 @@ const agentDetailFixture: SerializedAgentDetail = {
   ],
 };
 
+const projectsFixture: SerializedProjectsOverview = {
+  generatedAt: "2026-05-01T10:10:00.000Z",
+  projects: [
+    {
+      projectKey: "fixture:/projects/slopwatch-demo",
+      project: {
+        displayName: "slopwatch-demo",
+        rootPath: "/projects/slopwatch-demo",
+      },
+      lastActivityAt: "2026-05-01T10:04:00.000Z",
+      agentCounts: {
+        total: 3,
+        active: 1,
+        blocked: 1,
+        failed: 0,
+        finished: 1,
+      },
+    },
+  ],
+};
+
+const sourcesFixture: SerializedSourcesHealth = {
+  generatedAt: "2026-05-01T10:10:00.000Z",
+  sources: [
+    {
+      sourceKey: "codex-local:default",
+      sourceType: "codex-local",
+      path: "/sources/override",
+      origin: "configured",
+      overridden: true,
+      health: { status: "ok" },
+      format: { status: "ok" },
+    },
+    {
+      sourceKey: "codex-local:missing",
+      sourceType: "codex-local",
+      path: "/sources/missing",
+      origin: "configured",
+      overridden: false,
+      health: {
+        status: "missing",
+        message: "Source path does not exist.",
+      },
+      format: {
+        status: "missing",
+        message: "Source path does not exist.",
+      },
+    },
+    {
+      sourceKey: "codex-local:detected",
+      sourceType: "codex-local",
+      path: "/sources/detected",
+      origin: "detected",
+      overridden: false,
+      health: { status: "ok" },
+      format: {
+        status: "malformed",
+        message: "Codex local Source must contain sessions/ or history.jsonl.",
+      },
+    },
+  ],
+};
+
 test("Now screen renders a fixture-backed Agent card", () => {
   const markup = renderToStaticMarkup(
     <StaticRouter location="/">
@@ -118,6 +183,52 @@ test("Now screen renders a fixture-backed Agent card", () => {
   expect(markup).toContain("estimated tokens");
   expect(markup).toContain('href="/agents/work-unit-1"');
   expect(markup).not.toContain("/projects/slopwatch-demo");
+});
+
+test("Projects route renders recent Projects and links to filtered Agent activity", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/projects">
+      <DashboardRoutes
+        initialProjection={nowFixture}
+        initialProjects={projectsFixture}
+      />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Projects");
+  expect(markup).toContain("Sources");
+  expect(markup).toContain("slopwatch-demo");
+  expect(markup).toContain("/projects/slopwatch-demo");
+  expect(markup).toContain("3 Agents");
+  expect(markup).toContain("1 Active");
+  expect(markup).toContain("1 Blocked");
+  expect(markup).toContain("1 Finished");
+  expect(markup).toContain('href="/?project=%2Fprojects%2Fslopwatch-demo"');
+});
+
+test("Sources route renders detected and overridden Source health", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/sources">
+      <DashboardRoutes initialSources={sourcesFixture} />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Sources");
+  expect(markup).toContain("Now");
+  expect(markup).toContain("Projects");
+  expect(markup).toContain("codex-local:default");
+  expect(markup).toContain("/sources/override");
+  expect(markup).toContain("configured");
+  expect(markup).toContain("override");
+  expect(markup).toContain("codex-local:detected");
+  expect(markup).toContain("detected");
+  expect(markup).toContain("ok");
+  expect(markup).toContain("missing");
+  expect(markup).toContain("malformed");
+  expect(markup).toContain("Source path does not exist.");
+  expect(markup).toContain(
+    "Codex local Source must contain sessions/ or history.jsonl.",
+  );
 });
 
 test("Agent detail route renders timeline metadata and keeps Raw payload hidden by default", () => {

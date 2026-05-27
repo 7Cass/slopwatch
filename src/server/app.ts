@@ -6,10 +6,17 @@ import {
   buildNowProjection,
   type NowProjectionProvider,
 } from "../now/projection";
+import {
+  buildProjectsOverview,
+  type ProjectsOverviewProvider,
+} from "../projects/overview";
+import type { SourcesHealthProvider } from "../sources/health";
 import type { NowUpdateSource } from "./now-updates";
 
 export type ServerAppOptions = {
   nowProvider?: NowProjectionProvider;
+  projectsOverviewProvider?: ProjectsOverviewProvider;
+  sourcesHealthProvider?: SourcesHealthProvider;
   agentDetailProvider?: AgentDetailProvider;
   nowUpdates?: NowUpdateSource;
   dashboardAssetsPath?: string;
@@ -25,6 +32,21 @@ export function createServerApp(options: ServerAppOptions = {}) {
           records: [],
         }),
       ));
+  const projectsOverviewProvider =
+    options.projectsOverviewProvider ??
+    (() =>
+      Promise.resolve(
+        buildProjectsOverview({
+          records: [],
+        }),
+      ));
+  const sourcesHealthProvider =
+    options.sourcesHealthProvider ??
+    (() =>
+      Promise.resolve({
+        generatedAt: new Date(),
+        sources: [],
+      }));
 
   app.get("/health", (context) =>
     context.json({
@@ -34,6 +56,12 @@ export function createServerApp(options: ServerAppOptions = {}) {
   );
 
   app.get("/api/now", async (context) => context.json(await nowProvider()));
+  app.get("/api/projects/recent", async (context) =>
+    context.json(await projectsOverviewProvider()),
+  );
+  app.get("/api/sources/health", async (context) =>
+    context.json(await sourcesHealthProvider()),
+  );
   app.get("/api/agents/:workUnitId", async (context) => {
     const detail = await options.agentDetailProvider?.(
       context.req.param("workUnitId"),

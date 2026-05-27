@@ -6,11 +6,18 @@ import {
   OctagonX,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, Route, Routes, useParams } from "react-router-dom";
+import {
+  Link,
+  Route,
+  Routes,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 
 import { Badge, type BadgeProps } from "./components/ui/badge";
 import { Card, CardContent, CardHeader } from "./components/ui/card";
 import { connectToNowEvents } from "./now-stream";
+import type { SourceHealthStatus, SourceReport } from "../admin/sources";
 import type { NowGroupKey, TokenQuality } from "../now/projection";
 import type { WorkUnitState } from "../infer/work-unit";
 
@@ -36,6 +43,34 @@ export type SerializedNowProjectionGroup = {
 export type SerializedNowProjection = {
   generatedAt: string;
   groups: SerializedNowProjectionGroup[];
+};
+
+export type SerializedProjectOverview = {
+  projectKey: string;
+  project: {
+    displayName: string;
+    rootPath: string;
+  };
+  lastActivityAt: string;
+  agentCounts: {
+    total: number;
+    active: number;
+    blocked: number;
+    failed: number;
+    finished: number;
+  };
+};
+
+export type SerializedProjectsOverview = {
+  generatedAt: string;
+  projects: SerializedProjectOverview[];
+};
+
+export type SerializedSourceHealth = SourceReport;
+
+export type SerializedSourcesHealth = {
+  generatedAt: string;
+  sources: SerializedSourceHealth[];
 };
 
 export type SerializedAgentDetailEvent = {
@@ -131,16 +166,35 @@ const workUnitStateBadges: Record<WorkUnitState, BadgeProps["variant"]> = {
   finished: "success",
 };
 
+const sourceHealthBadges: Record<SourceHealthStatus, BadgeProps["variant"]> = {
+  ok: "success",
+  missing: "warning",
+  unreadable: "danger",
+  malformed: "warning",
+};
+
 export function DashboardRoutes({
   initialProjection,
+  initialProjects,
+  initialSources,
   initialAgentDetails = [],
 }: {
   initialProjection?: SerializedNowProjection;
+  initialProjects?: SerializedProjectsOverview;
+  initialSources?: SerializedSourcesHealth;
   initialAgentDetails?: SerializedAgentDetail[];
 }) {
   return (
     <Routes>
       <Route path="/" element={<NowScreen projection={initialProjection} />} />
+      <Route
+        path="/projects"
+        element={<ProjectsScreen overview={initialProjects} />}
+      />
+      <Route
+        path="/sources"
+        element={<SourcesScreen health={initialSources} />}
+      />
       <Route
         path="/agents/:workUnitId"
         element={<AgentDetailScreen initialAgentDetails={initialAgentDetails} />}
@@ -156,24 +210,35 @@ function NowScreen({
   projection?: SerializedNowProjection;
 }) {
   const [nowProjection, setNowProjection] = useState(projection);
-  const groups = nowProjection?.groups ?? [];
+  const [searchParams] = useSearchParams();
+  const selectedProject = searchParams.get("project");
+  const groups = selectedProject
+    ? (nowProjection?.groups ?? []).map((group) => ({
+        ...group,
+        agents: group.agents.filter(
+          (agent) => agent.project.rootPath === selectedProject,
+        ),
+      }))
+    : (nowProjection?.groups ?? []);
 
   useEffect(() => connectToNowEvents({ onProjection: setNowProjection }), []);
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-950">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-2 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-sm font-medium text-slate-500">Slopwatch</p>
-            <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
-              Now
-            </h1>
-          </div>
+        <header className="flex flex-col gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <DashboardTitle title="Now" />
           <p className="text-sm text-slate-500">
             Updated {formatTimestamp(nowProjection?.generatedAt)}
           </p>
         </header>
+
+        {selectedProject ? (
+          <div className="rounded-lg border border-slate-200 bg-white p-3 text-sm text-slate-600">
+            Showing Agent activity for{" "}
+            <span className="font-medium text-slate-900">{selectedProject}</span>
+          </div>
+        ) : null}
 
         {groups.length === 0 ? (
           <EmptyNowState />
@@ -181,6 +246,152 @@ function NowScreen({
           <div className="grid gap-4 xl:grid-cols-4">
             {groups.map((group) => (
               <AgentGroup key={group.key} group={group} />
+            ))}
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function ProjectsScreen({
+  overview,
+}: {
+  overview?: SerializedProjectsOverview;
+}) {
+  const [projectsOverview, setProjectsOverview] = useState(overview);
+  const [status, setStatus] = useState<"loading" | "loaded" | "unavailable">(
+    overview ? "loaded" : "loading",
+  );
+  const projects = projectsOverview?.projects ?? [];
+
+  useEffect(() => {
+    if (projectsOverview) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setStatus("loading");
+
+    fetch("/api/projects/recent")
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load Projects: ${response.status}`);
+        }
+
+        return (await response.json()) as SerializedProjectsOverview;
+      })
+      .then((loadedOverview) => {
+        if (!cancelled) {
+          setProjectsOverview(loadedOverview);
+          setStatus("loaded");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStatus("unavailable");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [projectsOverview]);
+
+  return (
+    <main className="min-h-screen bg-slate-50 text-slate-950">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <header className="flex flex-col gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <DashboardTitle title="Projects" />
+          <p className="text-sm text-slate-500">
+            Updated {formatTimestamp(projectsOverview?.generatedAt)}
+          </p>
+        </header>
+
+        {projects.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+            <p className="text-sm font-medium text-slate-700">
+              {formatEmptyProjectsState(status)}
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {projects.map((project) => (
+              <ProjectCard key={project.projectKey} project={project} />
+            ))}
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function SourcesScreen({
+  health,
+}: {
+  health?: SerializedSourcesHealth;
+}) {
+  const [sourcesHealth, setSourcesHealth] = useState(health);
+  const [status, setStatus] = useState<"loading" | "loaded" | "unavailable">(
+    health ? "loaded" : "loading",
+  );
+  const sources = sourcesHealth?.sources ?? [];
+
+  useEffect(() => {
+    if (sourcesHealth) {
+      return;
+    }
+
+    let cancelled = false;
+
+    setStatus("loading");
+
+    fetch("/api/sources/health")
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load Sources: ${response.status}`);
+        }
+
+        return (await response.json()) as SerializedSourcesHealth;
+      })
+      .then((loadedHealth) => {
+        if (!cancelled) {
+          setSourcesHealth(loadedHealth);
+          setStatus("loaded");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStatus("unavailable");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sourcesHealth]);
+
+  return (
+    <main className="min-h-screen bg-slate-50 text-slate-950">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <header className="flex flex-col gap-4 border-b border-slate-200 pb-4 sm:flex-row sm:items-end sm:justify-between">
+          <DashboardTitle title="Sources" />
+          <p className="text-sm text-slate-500">
+            Updated {formatTimestamp(sourcesHealth?.generatedAt)}
+          </p>
+        </header>
+
+        {sources.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-slate-200 bg-white px-6 py-16 text-center">
+            <p className="text-sm font-medium text-slate-700">
+              {formatEmptySourcesState(status)}
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {sources.map((source) => (
+              <SourceCard key={source.sourceKey} source={source} />
             ))}
           </div>
         )}
@@ -427,6 +638,140 @@ function BackToNowLink() {
   );
 }
 
+function DashboardTitle({ title }: { title: string }) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium text-slate-500">Slopwatch</p>
+        <h1 className="text-2xl font-semibold tracking-normal text-slate-950">
+          {title}
+        </h1>
+      </div>
+      <nav aria-label="Dashboard" className="flex flex-wrap gap-2">
+        <DashboardNavLink to="/">Now</DashboardNavLink>
+        <DashboardNavLink to="/projects">Projects</DashboardNavLink>
+        <DashboardNavLink to="/sources">Sources</DashboardNavLink>
+      </nav>
+    </div>
+  );
+}
+
+function DashboardNavLink({
+  to,
+  children,
+}: {
+  to: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      to={to}
+      className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:border-slate-300 hover:text-slate-950"
+    >
+      {children}
+    </Link>
+  );
+}
+
+function ProjectCard({ project }: { project: SerializedProjectOverview }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="truncate text-base font-semibold text-slate-950">
+              {project.project.displayName}
+            </h2>
+            <p className="mt-1 break-words text-sm text-slate-500">
+              {project.project.rootPath}
+            </p>
+          </div>
+          <Link
+            to={`/?project=${encodeURIComponent(project.project.rootPath)}`}
+            className="inline-flex w-fit items-center rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            View Agents
+          </Link>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-3 text-sm text-slate-600 sm:grid-cols-5">
+          <Metric
+            label="Last activity"
+            value={formatTimestamp(project.lastActivityAt)}
+          />
+          <Metric
+            label="Agents"
+            value={`${project.agentCounts.total} ${pluralize("Agent", project.agentCounts.total)}`}
+          />
+          <Metric
+            label="Active"
+            value={`${project.agentCounts.active} Active`}
+          />
+          <Metric
+            label="Blocked"
+            value={`${project.agentCounts.blocked} Blocked`}
+          />
+          <Metric
+            label="Finished"
+            value={`${project.agentCounts.finished} Finished`}
+          />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SourceCard({ source }: { source: SerializedSourceHealth }) {
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="break-words text-base font-semibold text-slate-950">
+              {source.sourceKey}
+            </h2>
+            <p className="mt-1 break-words text-sm text-slate-500">
+              {source.path}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge variant="muted">{source.origin}</Badge>
+            {source.overridden ? <Badge variant="warning">override</Badge> : null}
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-3 text-sm text-slate-600 sm:grid-cols-3">
+          <Metric label="Type" value={source.sourceType} />
+          <SourceHealthMetric label="Health" health={source.health} />
+          <SourceHealthMetric label="Format" health={source.format} />
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SourceHealthMetric({
+  label,
+  health,
+}: {
+  label: string;
+  health: SerializedSourceHealth["health"];
+}) {
+  return (
+    <div className="min-w-0">
+      <dt className="truncate">{label}</dt>
+      <dd className="mt-1 space-y-1">
+        <Badge variant={sourceHealthBadges[health.status]}>{health.status}</Badge>
+        {health.message ? (
+          <p className="break-words text-sm text-slate-600">{health.message}</p>
+        ) : null}
+      </dd>
+    </div>
+  );
+}
+
 function ForkOriginPanel({
   fork,
 }: {
@@ -579,6 +924,32 @@ function EmptyNowState() {
   );
 }
 
+function formatEmptyProjectsState(
+  status: "loading" | "loaded" | "unavailable",
+) {
+  if (status === "loading") {
+    return "Loading Projects";
+  }
+
+  if (status === "unavailable") {
+    return "Projects unavailable";
+  }
+
+  return "No recent Projects";
+}
+
+function formatEmptySourcesState(status: "loading" | "loaded" | "unavailable") {
+  if (status === "loading") {
+    return "Loading Sources";
+  }
+
+  if (status === "unavailable") {
+    return "Sources unavailable";
+  }
+
+  return "No Sources detected";
+}
+
 function formatTimestamp(value?: string) {
   if (!value) {
     return "waiting for snapshot";
@@ -658,4 +1029,8 @@ function formatTokenQuality(tokenQuality: TokenQuality) {
   }
 
   return `${tokenQuality} tokens`;
+}
+
+function pluralize(label: string, count: number) {
+  return count === 1 ? label : `${label}s`;
 }

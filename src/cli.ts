@@ -142,7 +142,7 @@ export function buildProgram() {
           const server = await startServer({
             host: options.host,
             port: Number.parseInt(options.port, 10),
-            databaseUrl: config.databaseUrl,
+            config,
           });
 
           console.log(`Slopwatch listening on ${server.url}`);

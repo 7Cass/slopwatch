@@ -15,6 +15,15 @@ import {
   createNowProjectionProvider,
   type NowProjectionProvider,
 } from "../now/projection";
+import { createPostgresProjectsOverviewStore } from "../projects/postgres-store";
+import {
+  createProjectsOverviewProvider,
+  type ProjectsOverviewProvider,
+} from "../projects/overview";
+import {
+  createSourcesHealthProvider,
+  type SourcesHealthProvider,
+} from "../sources/health";
 import { createNowUpdateBus } from "./now-updates";
 
 export type CollectionRunner = ({
@@ -26,10 +35,13 @@ export type CollectionRunner = ({
 export type ServerOptions = {
   host?: string;
   port?: number;
+  config?: RuntimeConfig;
   databaseUrl?: string;
   migrationChecker?: MigrationHealthChecker;
   collectionRunner?: CollectionRunner;
   nowProvider?: NowProjectionProvider;
+  projectsOverviewProvider?: ProjectsOverviewProvider;
+  sourcesHealthProvider?: SourcesHealthProvider;
   agentDetailProvider?: AgentDetailProvider;
   pollIntervalMs?: number;
 };
@@ -45,7 +57,7 @@ export async function startServer(
   options: ServerOptions = {},
 ): Promise<RunningServer> {
   const host = options.host ?? "127.0.0.1";
-  const config = { databaseUrl: options.databaseUrl };
+  const config = options.config ?? { databaseUrl: options.databaseUrl };
   const collectionRunner = options.collectionRunner ?? runFixtureCollection;
 
   await assertDatabaseReady({
@@ -59,13 +71,25 @@ export async function startServer(
     nowProvider:
       options.nowProvider ??
       createNowProjectionProvider({
-        databaseUrl: options.databaseUrl!,
+        databaseUrl: config.databaseUrl!,
         storeFactory: createPostgresNowProjectionStore,
+      }),
+    projectsOverviewProvider:
+      options.projectsOverviewProvider ??
+      createProjectsOverviewProvider({
+        databaseUrl: config.databaseUrl!,
+        storeFactory: createPostgresProjectsOverviewStore,
+      }),
+    sourcesHealthProvider:
+      options.sourcesHealthProvider ??
+      createSourcesHealthProvider({
+        config,
+        env: Bun.env,
       }),
     agentDetailProvider:
       options.agentDetailProvider ??
       createAgentDetailProvider({
-        databaseUrl: options.databaseUrl!,
+        databaseUrl: config.databaseUrl!,
         storeFactory: createPostgresAgentDetailStore,
       }),
     nowUpdates,
