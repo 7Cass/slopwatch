@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 
+import { runFixtureCollection } from "./collect/run";
 import { resolveRuntimeConfig } from "./config/runtime";
 import { runDatabaseMigrations } from "./db/migrations";
 import { startServer } from "./server/serve";
@@ -86,7 +87,29 @@ function buildProgram() {
     .command("collect")
     .description("Collect Events from configured Sources.")
     .option("--fixture", "Collect from the deterministic fixture Source.")
-    .action(scaffoldAction("collect"));
+    .option("--database-url <url>", "Postgres connection URL.")
+    .action(async (options: { fixture?: boolean; databaseUrl?: string }) => {
+      if (!options.fixture) {
+        scaffoldAction("collect")();
+        return;
+      }
+
+      try {
+        const summary = await runFixtureCollection({
+          config: resolveRuntimeConfig({
+            env: Bun.env,
+            flags: { databaseUrl: options.databaseUrl },
+          }),
+        });
+
+        console.log(
+          `Collected ${summary.eventsProcessed} fixture Events for ${summary.workUnitsProcessed} WorkUnit.`,
+        );
+      } catch (error) {
+        console.error(formatCliError(error));
+        process.exitCode = 1;
+      }
+    });
 
   program
     .command("status")

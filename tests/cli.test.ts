@@ -63,3 +63,11 @@ test("db migrate requires DATABASE_URL before applying migrations", async () => 
   expect(result.stderr).toContain("DATABASE_URL is required");
   expect(result.stderr).toContain("--database-url");
 });
+
+test("collect --fixture requires DATABASE_URL before collecting", async () => {
+  const result = await runCli(["collect", "--fixture"]);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("DATABASE_URL is required");
+  expect(result.stderr).toContain("--database-url");
+});
