@@ -97,6 +97,7 @@ export type FixtureCollectionSummary = {
   sourceKey: string;
   eventsProcessed: number;
   workUnitsProcessed: number;
+  workUnitIds: string[];
 };
 
 const fixtureSourceKey = "fixture:codex-local-demo";
@@ -129,6 +130,7 @@ export async function collectSourceRecords({
   includeContent?: boolean;
 }): Promise<FixtureCollectionSummary> {
   const processedWorkUnits = new Set<string>();
+  const processedWorkUnitIds = new Set<string>();
 
   for (const record of records) {
     const source = await store.upsertSource(record.source);
@@ -164,12 +166,14 @@ export async function collectSourceRecords({
     });
 
     processedWorkUnits.add(workUnit.identityKey);
+    processedWorkUnitIds.add(workUnit.id);
   }
 
   return {
     sourceKey: records[0]?.source.sourceKey ?? fixtureSourceKey,
     eventsProcessed: records.length,
     workUnitsProcessed: processedWorkUnits.size,
+    workUnitIds: [...processedWorkUnitIds],
   };
 }
 

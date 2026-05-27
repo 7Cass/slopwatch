@@ -13,8 +13,13 @@ import {
   type StoredWorkUnit,
 } from "../src/collect/fixture";
 import { runFixtureCollection } from "../src/collect/run";
+import type {
+  InferenceEvent,
+  InferenceStore,
+  WorkUnitInference,
+} from "../src/infer/work-unit";
 
-class InMemoryCollectionStore implements CollectionStore {
+class InMemoryCollectionStore implements CollectionStore, InferenceStore {
   private nextId = 1;
   readonly sources = new Map<string, StoredSource>();
   readonly projects = new Map<string, StoredProject>();
@@ -22,6 +27,7 @@ class InMemoryCollectionStore implements CollectionStore {
   readonly forks = new Map<string, StoredFork>();
   readonly workUnits = new Map<string, StoredWorkUnit>();
   readonly events = new Map<string, StoredEvent>();
+  readonly inferences = new Map<string, WorkUnitInference>();
 
   async upsertSource(input: Parameters<CollectionStore["upsertSource"]>[0]) {
     const existing = this.sources.get(input.sourceKey);
@@ -100,6 +106,25 @@ class InMemoryCollectionStore implements CollectionStore {
     return event;
   }
 
+  async listWorkUnitEvents(workUnitId: string): Promise<InferenceEvent[]> {
+    return [...this.events.values()]
+      .filter((event) => event.workUnitId === workUnitId)
+      .sort(
+        (left, right) =>
+          left.observedAt.getTime() - right.observedAt.getTime(),
+      )
+      .map((event) => ({
+        eventType: event.eventType,
+        observedAt: event.observedAt,
+        metadata: event.metadata,
+      }));
+  }
+
+  async upsertInference(inference: WorkUnitInference) {
+    this.inferences.set(inference.workUnitId, inference);
+    return inference;
+  }
+
   private allocateId() {
     return String(this.nextId++);
   }
@@ -121,7 +146,7 @@ describe("fixture collection", () => {
 
     const summary = await collectFixtureSource({ store });
 
-    expect(summary).toEqual({
+    expect(summary).toMatchObject({
       sourceKey: "fixture:codex-local-demo",
       eventsProcessed: 3,
       workUnitsProcessed: 1,
@@ -140,9 +165,16 @@ describe("fixture collection", () => {
         "fixture/codex-local-demo/session-001/fork-main/0003",
       ],
     );
-    expect([...store.workUnits.values()][0]?.identityKey).toBe(
+    const [workUnit] = [...store.workUnits.values()];
+
+    if (!workUnit) {
+      throw new Error("Fixture collection should create one WorkUnit.");
+    }
+
+    expect(workUnit.identityKey).toBe(
       "fixture:codex-local-demo:session-001:fork-main",
     );
+    expect(summary.workUnitIds).toEqual([workUnit.id]);
   });
 
   test("deduplicates reruns by Source locator while preserving stable WorkUnit identity", async () => {
@@ -348,10 +380,23 @@ describe("fixture collection", () => {
           },
         });
       },
+      inferenceStoreFactory: (databaseUrl) => {
+        databaseUrls.push(databaseUrl);
+        return store;
+      },
     });
 
     expect(summary.eventsProcessed).toBe(3);
-    expect(databaseUrls).toEqual(["postgres://localhost/slopwatch_fixture"]);
+    expect(databaseUrls).toEqual([
+      "postgres://localhost/slopwatch_fixture",
+      "postgres://localhost/slopwatch_fixture",
+    ]);
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "active",
+        inferenceVersion: "work-unit-inference-v1",
+      },
+    ]);
     expect(closed).toBe(true);
   });
 });
