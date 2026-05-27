@@ -1,7 +1,24 @@
 import { Hono } from "hono";
 
-export function createServerApp() {
+import {
+  buildNowProjection,
+  type NowProjectionProvider,
+} from "../now/projection";
+
+export type ServerAppOptions = {
+  nowProvider?: NowProjectionProvider;
+};
+
+export function createServerApp(options: ServerAppOptions = {}) {
   const app = new Hono();
+  const nowProvider =
+    options.nowProvider ??
+    (() =>
+      Promise.resolve(
+        buildNowProjection({
+          records: [],
+        }),
+      ));
 
   app.get("/health", (context) =>
     context.json({
@@ -9,6 +26,8 @@ export function createServerApp() {
       status: "ok",
     }),
   );
+
+  app.get("/api/now", async (context) => context.json(await nowProvider()));
 
   return app;
 }

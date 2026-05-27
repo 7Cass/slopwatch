@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 
+import { buildNowProjection } from "../src/now/projection";
+import { runNowStatus } from "../src/now/status";
+
 const cliPath = new URL("../src/cli.ts", import.meta.url).pathname;
 
 async function runCli(
@@ -77,4 +80,48 @@ test("collect exposes an explicit Raw payload opt-in", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("--include-content");
+});
+
+test("status runner prints the shared Now projection", async () => {
+  const lines: string[] = [];
+
+  await runNowStatus({
+    nowProvider: async () =>
+      buildNowProjection({
+        now: new Date("2026-05-01T10:10:00.000Z"),
+        records: [
+          {
+            workUnitId: "work-unit-1",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "active",
+            confidence: 0.7,
+            explanation: "detail-only field",
+            activeTimeMs: 4 * 60 * 1000,
+            lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+            lastAction: "reported progress",
+            toolCalls: 1,
+            tokenQuality: "unavailable",
+          },
+        ],
+      }),
+    writeLine: (line) => {
+      lines.push(line);
+    },
+  });
+
+  expect(lines.join("\n")).toContain("Active");
+  expect(lines.join("\n")).toContain("slopwatch-demo");
+  expect(lines.join("\n")).toContain("reported progress");
+  expect(lines.join("\n")).not.toContain("detail-only field");
+});
+
+test("status requires DATABASE_URL before reading the Now projection", async () => {
+  const result = await runCli(["status"]);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("DATABASE_URL is required");
+  expect(result.stderr).toContain("--database-url");
 });

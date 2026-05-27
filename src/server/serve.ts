@@ -3,6 +3,8 @@ import {
   assertDatabaseReady,
   type MigrationHealthChecker,
 } from "../db/health";
+import { createPostgresNowProjectionStore } from "../now/postgres-store";
+import { createNowProjectionProvider } from "../now/projection";
 
 export type ServerOptions = {
   host?: string;
@@ -26,7 +28,12 @@ export async function startServer(
     checker: options.migrationChecker,
   });
 
-  const app = createServerApp();
+  const app = createServerApp({
+    nowProvider: createNowProjectionProvider({
+      databaseUrl: options.databaseUrl!,
+      storeFactory: createPostgresNowProjectionStore,
+    }),
+  });
   const server = Bun.serve({
     fetch: app.fetch,
     hostname: host,

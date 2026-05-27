@@ -3,7 +3,13 @@ import { Command } from "commander";
 
 import { runFixtureCollection } from "./collect/run";
 import { resolveRuntimeConfig } from "./config/runtime";
-import { runDatabaseMigrations } from "./db/migrations";
+import {
+  MissingDatabaseUrlError,
+  runDatabaseMigrations,
+} from "./db/migrations";
+import { createPostgresNowProjectionStore } from "./now/postgres-store";
+import { createNowProjectionProvider } from "./now/projection";
+import { runNowStatus } from "./now/status";
 import { startServer } from "./server/serve";
 
 function scaffoldAction(commandName: string) {
@@ -125,7 +131,29 @@ function buildProgram() {
   program
     .command("status")
     .description("Print the current Now projection in the terminal.")
-    .action(scaffoldAction("status"));
+    .option("--database-url <url>", "Postgres connection URL.")
+    .action(async (options: { databaseUrl?: string }) => {
+      try {
+        const config = resolveRuntimeConfig({
+          env: Bun.env,
+          flags: { databaseUrl: options.databaseUrl },
+        });
+
+        if (!config.databaseUrl) {
+          throw new MissingDatabaseUrlError();
+        }
+
+        await runNowStatus({
+          nowProvider: createNowProjectionProvider({
+            databaseUrl: config.databaseUrl,
+            storeFactory: createPostgresNowProjectionStore,
+          }),
+        });
+      } catch (error) {
+        console.error(formatCliError(error));
+        process.exitCode = 1;
+      }
+    });
 
   program
     .command("sources")

@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { createServer } from "node:net";
 
+import { buildNowProjection } from "../src/now/projection";
+import { createServerApp } from "../src/server/app";
 import { startServer } from "../src/server/serve";
 
 async function getAvailablePort() {
@@ -48,6 +50,71 @@ test("server starts on localhost and answers the health endpoint", async () => {
   } finally {
     await server.stop();
   }
+});
+
+test("server exposes the shared Now projection through the API", async () => {
+  const projection = buildNowProjection({
+    now: new Date("2026-05-01T10:10:00.000Z"),
+    records: [
+      {
+        workUnitId: "work-unit-1",
+        project: {
+          displayName: "slopwatch-demo",
+          rootPath: "/projects/slopwatch-demo",
+        },
+        state: "active",
+        confidence: 0.7,
+        explanation: "detail-only field",
+        activeTimeMs: 4 * 60 * 1000,
+        lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+        lastAction: "reported progress",
+        toolCalls: 1,
+        tokenQuality: "unavailable",
+      },
+    ],
+  });
+  const app = createServerApp({
+    nowProvider: async () => projection,
+  });
+
+  const response = await app.request("/api/now");
+
+  expect(response.status).toBe(200);
+  await expect(response.json()).resolves.toEqual({
+    generatedAt: "2026-05-01T10:10:00.000Z",
+    groups: [
+      {
+        key: "blocked",
+        agents: [],
+      },
+      {
+        key: "active",
+        agents: [
+          {
+            workUnitId: "work-unit-1",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "active",
+            activeTimeMs: 240000,
+            lastActivityAt: "2026-05-01T10:04:00.000Z",
+            lastAction: "reported progress",
+            toolCalls: 1,
+            tokenQuality: "unavailable",
+          },
+        ],
+      },
+      {
+        key: "failed",
+        agents: [],
+      },
+      {
+        key: "recently_finished",
+        agents: [],
+      },
+    ],
+  });
 });
 
 test("server refuses to start when database migrations are pending", async () => {
