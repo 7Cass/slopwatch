@@ -1,0 +1,23 @@
+{
+  "name": "slopwatch",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "slopwatch": "./src/cli.ts"
+  },
+  "scripts": {
+    "cli": "bun run src/cli.ts",
+    "slopwatch": "bun run src/cli.ts",
+    "check": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "hono": "^4.6.14"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.14",
+    "typescript": "^5.7.2"
+  }
+}
