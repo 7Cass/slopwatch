@@ -107,7 +107,7 @@ async function writeSanitizedCodexSource({
       `,
     )
     .run(
-    threadId,
+      threadId,
       rolloutPath,
       1779876000,
       1779876120,
@@ -125,7 +125,7 @@ async function writeSanitizedCodexSource({
       "user",
       1779876000000,
       1779876120000,
-  );
+    );
   if (parentThreadId) {
     database
       .query(
@@ -265,6 +265,28 @@ describe("Codex local Source adapter", () => {
       command: "bun test",
       toolCalls: 1,
     });
+  });
+
+  test("emits idempotent Source locators and identity across repeated reads", async () => {
+    const { sourcePath } = await writeSanitizedCodexSource();
+    const source = {
+      sourceKey: "codex-local:default",
+      sourceType: "codex-local",
+      path: sourcePath,
+    };
+
+    const firstRead = await readCodexLocalSourceRecords({ source });
+    const secondRead = await readCodexLocalSourceRecords({ source });
+
+    expect(secondRead.map((record) => record.event.sourceLocator)).toEqual(
+      firstRead.map((record) => record.event.sourceLocator),
+    );
+    expect(secondRead.map((record) => record.session.sourceSessionId)).toEqual(
+      firstRead.map((record) => record.session.sourceSessionId),
+    );
+    expect(secondRead.map((record) => record.workUnit.identityKey)).toEqual(
+      firstRead.map((record) => record.workUnit.identityKey),
+    );
   });
 
   test("emits user and assistant message text as opt-in Raw payload instead of metadata", async () => {

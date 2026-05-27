@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -327,6 +334,33 @@ describe("sources", () => {
       health: { status: "ok" },
       format: { status: "ok" },
     });
+  });
+
+  test("reports unreadable Source paths with clear health and format status", async () => {
+    const configPath = await tempConfigPath();
+    const sourcePath = dirname(configPath);
+    const checker = createLocalSourceHealthChecker();
+    await mkdir(sourcePath, { recursive: true });
+    await chmod(sourcePath, 0);
+
+    try {
+      const report = await checker.check({
+        sourceType: "codex-local",
+        path: sourcePath,
+      });
+
+      expect(report).toMatchObject({
+        health: { status: "unreadable" },
+        format: { status: "unreadable" },
+      });
+      if (!("health" in report && "format" in report)) {
+        throw new Error("Expected separate Source health and format statuses.");
+      }
+      expect(typeof report.health.message).toBe("string");
+      expect(typeof report.format.message).toBe("string");
+    } finally {
+      await chmod(sourcePath, 0o700);
+    }
   });
 });
 
