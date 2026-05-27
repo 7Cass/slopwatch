@@ -7,19 +7,35 @@
     "slopwatch": "./src/cli.ts"
   },
   "scripts": {
+    "build": "vite build",
     "cli": "bun run src/cli.ts",
+    "dashboard:dev": "vite --host 127.0.0.1",
     "slopwatch": "bun run src/cli.ts",
     "check": "tsc --noEmit",
     "test": "bun test"
   },
   "dependencies": {
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "commander": "^12.1.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.6.14",
-    "postgres": "^3.4.9"
+    "lucide-react": "^0.468.0",
+    "postgres": "^3.4.9",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1",
+    "tailwind-merge": "^2.6.0"
   },
   "devDependencies": {
     "@types/bun": "^1.1.14",
-    "typescript": "^5.7.2"
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
   }
 }

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { serveStatic } from "hono/bun";
 
 import {
   buildNowProjection,
@@ -9,6 +10,7 @@ import type { NowUpdateSource } from "./now-updates";
 export type ServerAppOptions = {
   nowProvider?: NowProjectionProvider;
   nowUpdates?: NowUpdateSource;
+  dashboardAssetsPath?: string;
 };
 
 export function createServerApp(options: ServerAppOptions = {}) {
@@ -38,7 +40,48 @@ export function createServerApp(options: ServerAppOptions = {}) {
     }),
   );
 
+  registerDashboardRoutes({
+    app,
+    dashboardAssetsPath: options.dashboardAssetsPath ?? "./dist/dashboard",
+  });
+
   return app;
+}
+
+function registerDashboardRoutes({
+  app,
+  dashboardAssetsPath,
+}: {
+  app: Hono;
+  dashboardAssetsPath: string;
+}) {
+  const staticFiles = serveStatic({ root: dashboardAssetsPath });
+  const indexFallback = serveStatic({
+    root: dashboardAssetsPath,
+    path: "index.html",
+  });
+
+  app.get("*", async (context, next) => {
+    if (isReservedServerPath(context.req.path)) {
+      await next();
+      return;
+    }
+
+    return staticFiles(context, next);
+  });
+
+  app.get("*", async (context, next) => {
+    if (isReservedServerPath(context.req.path)) {
+      await next();
+      return;
+    }
+
+    return indexFallback(context, next);
+  });
+}
+
+function isReservedServerPath(path: string) {
+  return path === "/health" || path === "/api" || path.startsWith("/api/");
 }
 
 function createNowEventsResponse({

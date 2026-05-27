@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { buildNowProjection } from "../src/now/projection";
 import { createServerApp } from "../src/server/app";
@@ -192,6 +195,35 @@ test("server exposes the shared Now projection through the API", async () => {
       },
     ],
   });
+});
+
+test("server serves the built dashboard and preserves API 404s", async () => {
+  const dashboardAssetsPath = await mkdtemp(
+    join(tmpdir(), "slopwatch-dashboard-"),
+  );
+  await mkdir(join(dashboardAssetsPath, "assets"));
+  await writeFile(
+    join(dashboardAssetsPath, "index.html"),
+    "<!doctype html><div id=\"root\"></div>",
+  );
+  await writeFile(
+    join(dashboardAssetsPath, "assets", "dashboard.js"),
+    "console.log('dashboard')",
+  );
+  const app = createServerApp({ dashboardAssetsPath });
+
+  const root = await app.request("/");
+  const nestedRoute = await app.request("/agents/work-unit-1");
+  const asset = await app.request("/assets/dashboard.js");
+  const missingApi = await app.request("/api/missing");
+
+  expect(root.status).toBe(200);
+  await expect(root.text()).resolves.toContain("<div id=\"root\"></div>");
+  expect(nestedRoute.status).toBe(200);
+  await expect(nestedRoute.text()).resolves.toContain("<div id=\"root\"></div>");
+  expect(asset.status).toBe(200);
+  await expect(asset.text()).resolves.toBe("console.log('dashboard')");
+  expect(missingApi.status).toBe(404);
 });
 
 test("SSE clients receive a complete Now snapshot on connection", async () => {
