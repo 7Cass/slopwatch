@@ -24,7 +24,18 @@ async function getAvailablePort() {
 
 test("server starts on localhost and answers the health endpoint", async () => {
   const port = await getAvailablePort();
-  const server = startServer({ host: "127.0.0.1", port });
+  const server = await startServer({
+    host: "127.0.0.1",
+    port,
+    databaseUrl: "postgres://localhost/slopwatch_test",
+    migrationChecker: {
+      check: async () => ({
+        status: "ready",
+        appliedMigrations: 1,
+        expectedMigrations: 1,
+      }),
+    },
+  });
 
   try {
     const response = await fetch(`${server.url}/health`);
@@ -36,5 +47,40 @@ test("server starts on localhost and answers the health endpoint", async () => {
     });
   } finally {
     await server.stop();
+  }
+});
+
+test("server refuses to start when database migrations are pending", async () => {
+  const port = await getAvailablePort();
+  let server: Awaited<ReturnType<typeof startServer>> | undefined;
+  const options = {
+    host: "127.0.0.1",
+    port,
+    databaseUrl: "postgres://localhost/slopwatch_test",
+    migrationChecker: {
+      check: async () => ({
+        status: "pending" as const,
+        appliedMigrations: 0,
+        expectedMigrations: 1,
+      }),
+    },
+  } as Parameters<typeof startServer>[0] & {
+    migrationChecker: {
+      check: () => Promise<{
+        status: "pending";
+        appliedMigrations: number;
+        expectedMigrations: number;
+      }>;
+    };
+  };
+
+  try {
+    await expect(
+      (async () => {
+        server = await startServer(options);
+      })(),
+    ).rejects.toThrow("Run slopwatch db migrate");
+  } finally {
+    await server?.stop();
   }
 });
