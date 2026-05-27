@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { buildProgram } from "../src/cli";
 import { buildNowProjection } from "../src/now/projection";
 import { runNowStatus } from "../src/now/status";
 
@@ -79,6 +80,62 @@ async function runCli(
   return { stdout, stderr, exitCode };
 }
 
+async function runServeCommand(
+  args: string[] = [],
+  overrides: {
+    openDashboardUrl?: (url: string) => Promise<void>;
+  } = {},
+) {
+  const configPath = await tempPath("config", "slopwatch", "config.json");
+  await mkdir(join(configPath, ".."), { recursive: true });
+  await writeFile(configPath, `${JSON.stringify({ sources: [] }, null, 2)}\n`);
+
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const starts: Array<{ host?: string; port?: number }> = [];
+  const openedUrls: string[] = [];
+  let stopCalls = 0;
+  const previousExitCode = process.exitCode;
+  process.exitCode = undefined;
+
+  try {
+    const program = buildProgram({
+      startServer: async (options: { host?: string; port?: number }) => {
+        starts.push(options);
+
+        return {
+          url: `http://${options.host}:${options.port}`,
+          stop: async () => {
+            stopCalls += 1;
+          },
+        };
+      },
+      openDashboardUrl:
+        overrides.openDashboardUrl ??
+        (async (url: string) => {
+          openedUrls.push(url);
+        }),
+      writeLine: (line: string) => stdout.push(line),
+      writeError: (line: string) => stderr.push(line),
+    });
+
+    await program.parseAsync(["serve", "--config", configPath, ...args], {
+      from: "user",
+    });
+
+    return {
+      stdout,
+      stderr,
+      starts,
+      openedUrls,
+      stopCalls,
+      exitCode: process.exitCode,
+    };
+  } finally {
+    process.exitCode = previousExitCode;
+  }
+}
+
 test("slopwatch CLI exposes the planned v0 command surface", async () => {
   const result = await runCli(["--help"]);
 
@@ -97,6 +154,67 @@ test("slopwatch CLI exposes the planned v0 command surface", async () => {
   ]) {
     expect(result.stdout).toContain(command);
   }
+});
+
+test("serve binds localhost by default and prints the dashboard URL", async () => {
+  const result = await runServeCommand(["--port", "4739"]);
+
+  expect(result.exitCode).toBeUndefined();
+  expect(result.starts).toHaveLength(1);
+  expect(result.starts[0]?.host).toBe("127.0.0.1");
+  expect(result.starts[0]?.port).toBe(4739);
+  expect(result.stdout).toEqual([
+    "Slopwatch dashboard: http://127.0.0.1:4739",
+  ]);
+  expect(result.stderr).toEqual([]);
+});
+
+test("serve warns when explicitly binding outside localhost", async () => {
+  const result = await runServeCommand([
+    "--host",
+    "0.0.0.0",
+    "--port",
+    "4740",
+  ]);
+
+  expect(result.exitCode).toBeUndefined();
+  expect(result.starts).toHaveLength(1);
+  expect(result.starts[0]?.host).toBe("0.0.0.0");
+  expect(result.stdout).toEqual([
+    "Slopwatch dashboard: http://0.0.0.0:4740",
+  ]);
+  expect(result.stderr).toEqual([
+    "Warning: binding Slopwatch to 0.0.0.0 exposes the unauthenticated dashboard and API beyond localhost.",
+  ]);
+});
+
+test("serve --open attempts to open the printed dashboard URL", async () => {
+  const result = await runServeCommand(["--port", "4741", "--open"]);
+
+  expect(result.exitCode).toBeUndefined();
+  expect(result.stdout).toEqual([
+    "Slopwatch dashboard: http://127.0.0.1:4741",
+  ]);
+  expect(result.openedUrls).toEqual(["http://127.0.0.1:4741"]);
+  expect(result.stderr).toEqual([]);
+});
+
+test("serve --open failure warns without stopping the server", async () => {
+  const result = await runServeCommand(["--port", "4742", "--open"], {
+    openDashboardUrl: async () => {
+      throw new Error("no browser available");
+    },
+  });
+
+  expect(result.exitCode).toBeUndefined();
+  expect(result.starts).toHaveLength(1);
+  expect(result.stopCalls).toBe(0);
+  expect(result.stdout).toEqual([
+    "Slopwatch dashboard: http://127.0.0.1:4742",
+  ]);
+  expect(result.stderr).toEqual([
+    "Warning: unable to open http://127.0.0.1:4742 in a browser: no browser available",
+  ]);
 });
 
 test("db migrate requires DATABASE_URL before applying migrations", async () => {

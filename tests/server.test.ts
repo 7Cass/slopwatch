@@ -167,10 +167,9 @@ function detailForAgent(workUnitId: string): AgentDetail {
   };
 }
 
-test("server starts on localhost and answers the health endpoint", async () => {
+test("server defaults to localhost and answers the health endpoint", async () => {
   const port = await getAvailablePort();
   const server = await startServer({
-    host: "127.0.0.1",
     port,
     databaseUrl: "postgres://localhost/slopwatch_test",
     collectionRunner: async () => {},
@@ -184,6 +183,8 @@ test("server starts on localhost and answers the health endpoint", async () => {
   });
 
   try {
+    expect(server.url).toBe(`http://127.0.0.1:${port}`);
+
     const response = await fetch(`${server.url}/health`);
 
     expect(response.status).toBe(200);

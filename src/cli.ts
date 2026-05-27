@@ -24,7 +24,18 @@ import {
 import { createPostgresNowProjectionStore } from "./now/postgres-store";
 import { createNowProjectionProvider } from "./now/projection";
 import { runNowStatus } from "./now/status";
-import { startServer } from "./server/serve";
+import {
+  startServer,
+  type RunningServer,
+  type ServerOptions,
+} from "./server/serve";
+
+export type CliDependencies = {
+  startServer?: (options: ServerOptions) => Promise<RunningServer>;
+  openDashboardUrl?: (url: string) => Promise<void>;
+  writeLine?: (line: string) => void;
+  writeError?: (line: string) => void;
+};
 
 function scaffoldAction(commandName: string) {
   return () => {
@@ -34,7 +45,14 @@ function scaffoldAction(commandName: string) {
   };
 }
 
-export function buildProgram() {
+export function buildProgram(dependencies: CliDependencies = {}) {
+  const serveDependencies = {
+    startServer,
+    openDashboardUrl,
+    writeLine: (line: string) => console.log(line),
+    writeError: (line: string) => console.error(line),
+    ...dependencies,
+  };
   const program = new Command();
 
   program
@@ -140,18 +158,35 @@ export function buildProgram() {
         port: string;
         config?: string;
         databaseUrl?: string;
+        open?: boolean;
       }) => {
         try {
           const config = await resolveCommandConfig(options);
-          const server = await startServer({
+          const server = await serveDependencies.startServer({
             host: options.host,
             port: Number.parseInt(options.port, 10),
             config,
           });
 
-          console.log(`Slopwatch listening on ${server.url}`);
+          if (!isLocalhostHost(options.host)) {
+            serveDependencies.writeError(
+              formatNetworkExposureWarning(options.host),
+            );
+          }
+
+          serveDependencies.writeLine(`Slopwatch dashboard: ${server.url}`);
+
+          if (options.open) {
+            try {
+              await serveDependencies.openDashboardUrl(server.url);
+            } catch (error) {
+              serveDependencies.writeError(
+                formatOpenDashboardWarning(server.url, error),
+              );
+            }
+          }
         } catch (error) {
-          console.error(formatCliError(error));
+          serveDependencies.writeError(formatCliError(error));
           process.exitCode = 1;
         }
       },
@@ -351,6 +386,50 @@ function sourceFlags(paths: string[] | undefined): SourceConfig[] | undefined {
 function collectValue(value: string, previous: string[]) {
   previous.push(value);
   return previous;
+}
+
+function isLocalhostHost(host: string) {
+  const normalizedHost = host.trim().toLowerCase();
+
+  return (
+    normalizedHost === "127.0.0.1" ||
+    normalizedHost === "localhost" ||
+    normalizedHost === "::1" ||
+    normalizedHost === "[::1]"
+  );
+}
+
+function formatNetworkExposureWarning(host: string) {
+  return `Warning: binding Slopwatch to ${host} exposes the unauthenticated dashboard and API beyond localhost.`;
+}
+
+function formatOpenDashboardWarning(url: string, error: unknown) {
+  return `Warning: unable to open ${url} in a browser: ${formatCliError(error)}`;
+}
+
+export async function openDashboardUrl(url: string) {
+  const proc = Bun.spawn(openDashboardCommand(url), {
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const exitCode = await proc.exited;
+
+  if (exitCode !== 0) {
+    throw new Error(`Unable to open dashboard URL in a browser: ${url}`);
+  }
+}
+
+function openDashboardCommand(url: string) {
+  if (process.platform === "darwin") {
+    return ["open", url];
+  }
+
+  if (process.platform === "win32") {
+    return ["cmd", "/c", "start", "", url];
+  }
+
+  return ["xdg-open", url];
 }
 
 function printInitReport(report: Awaited<ReturnType<typeof runInit>>) {
