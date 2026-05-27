@@ -1,8 +1,18 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
 
+import { runDoctor } from "./admin/doctor";
+import { runInit } from "./admin/init";
+import { runPurge } from "./admin/purge";
+import { listSources } from "./admin/sources";
 import { runFixtureCollection } from "./collect/run";
-import { resolveRuntimeConfig } from "./config/runtime";
+import { defaultUserConfigPath, readUserConfig } from "./config/local";
+import {
+  resolveRuntimeConfig,
+  type RuntimeConfig,
+  type RuntimeConfigFlags,
+  type SourceConfig,
+} from "./config/runtime";
 import {
   MissingDatabaseUrlError,
   runDatabaseMigrations,
@@ -20,7 +30,7 @@ function scaffoldAction(commandName: string) {
   };
 }
 
-function buildProgram() {
+export function buildProgram() {
   const program = new Command();
 
   program
@@ -31,24 +41,79 @@ function buildProgram() {
   program
     .command("init")
     .description("Create local Slopwatch configuration.")
-    .action(scaffoldAction("init"));
+    .option("--config <path>", "User-local Slopwatch config path.")
+    .option("--database-url <url>", "Postgres connection URL.")
+    .option(
+      "--source <path>",
+      "Codex local Source path override.",
+      collectValue,
+      [],
+    )
+    .option("--migrate", "Apply database migrations explicitly during init.")
+    .action(
+      async (options: {
+        config?: string;
+        databaseUrl?: string;
+        source: string[];
+        migrate?: boolean;
+      }) => {
+        try {
+          const report = await runInit({
+            configPath: options.config,
+            env: Bun.env,
+            flags: flagsFromOptions(options),
+            migrate: options.migrate ?? false,
+          });
+
+          printInitReport(report);
+        } catch (error) {
+          console.error(formatCliError(error));
+          process.exitCode = 1;
+        }
+      },
+    );
 
   program
     .command("doctor")
     .description("Inspect runtime, database, Source, and permission health.")
-    .action(scaffoldAction("doctor"));
+    .option("--config <path>", "User-local Slopwatch config path.")
+    .option("--database-url <url>", "Postgres connection URL.")
+    .option(
+      "--source <path>",
+      "Codex local Source path override.",
+      collectValue,
+      [],
+    )
+    .action(
+      async (options: {
+        config?: string;
+        databaseUrl?: string;
+        source: string[];
+      }) => {
+        try {
+          const report = await runDoctor({
+            configPath: options.config,
+            env: Bun.env,
+            flags: flagsFromOptions(options),
+          });
+
+          printDoctorReport(report);
+        } catch (error) {
+          console.error(formatCliError(error));
+          process.exitCode = 1;
+        }
+      },
+    );
 
   const db = program.command("db").description("Manage Slopwatch-owned state.");
   db.command("migrate")
     .description("Apply explicit database migrations.")
+    .option("--config <path>", "User-local Slopwatch config path.")
     .option("--database-url <url>", "Postgres connection URL.")
-    .action(async (options: { databaseUrl?: string }) => {
+    .action(async (options: { config?: string; databaseUrl?: string }) => {
       try {
         await runDatabaseMigrations({
-          config: resolveRuntimeConfig({
-            env: Bun.env,
-            flags: { databaseUrl: options.databaseUrl },
-          }),
+          config: await resolveCommandConfig(options),
         });
         console.log("Database migrations applied.");
       } catch (error) {
@@ -62,19 +127,18 @@ function buildProgram() {
     .description("Start the local Slopwatch API and dashboard server.")
     .option("--host <host>", "Host to bind.", "127.0.0.1")
     .option("--port <port>", "Port to bind.", "4317")
+    .option("--config <path>", "User-local Slopwatch config path.")
     .option("--database-url <url>", "Postgres connection URL.")
     .option("--open", "Open the dashboard URL after startup.")
     .action(
       async (options: {
         host: string;
         port: string;
+        config?: string;
         databaseUrl?: string;
       }) => {
         try {
-          const config = resolveRuntimeConfig({
-            env: Bun.env,
-            flags: { databaseUrl: options.databaseUrl },
-          });
+          const config = await resolveCommandConfig(options);
           const server = await startServer({
             host: options.host,
             port: Number.parseInt(options.port, 10),
@@ -97,11 +161,13 @@ function buildProgram() {
       "--include-content",
       "Store Raw payload when the Source provides opt-in source text.",
     )
+    .option("--config <path>", "User-local Slopwatch config path.")
     .option("--database-url <url>", "Postgres connection URL.")
     .action(
       async (options: {
         fixture?: boolean;
         includeContent?: boolean;
+        config?: string;
         databaseUrl?: string;
       }) => {
         if (!options.fixture) {
@@ -111,10 +177,7 @@ function buildProgram() {
 
         try {
           const summary = await runFixtureCollection({
-            config: resolveRuntimeConfig({
-              env: Bun.env,
-              flags: { databaseUrl: options.databaseUrl },
-            }),
+            config: await resolveCommandConfig(options),
             includeContent: options.includeContent ?? false,
           });
 
@@ -131,13 +194,11 @@ function buildProgram() {
   program
     .command("status")
     .description("Print the current Now projection in the terminal.")
+    .option("--config <path>", "User-local Slopwatch config path.")
     .option("--database-url <url>", "Postgres connection URL.")
-    .action(async (options: { databaseUrl?: string }) => {
+    .action(async (options: { config?: string; databaseUrl?: string }) => {
       try {
-        const config = resolveRuntimeConfig({
-          env: Bun.env,
-          flags: { databaseUrl: options.databaseUrl },
-        });
+        const config = await resolveCommandConfig(options);
 
         if (!config.databaseUrl) {
           throw new MissingDatabaseUrlError();
@@ -158,15 +219,160 @@ function buildProgram() {
   program
     .command("sources")
     .description("List detected and configured Sources with health.")
-    .action(scaffoldAction("sources"));
+    .option("--config <path>", "User-local Slopwatch config path.")
+    .option(
+      "--source <path>",
+      "Codex local Source path override.",
+      collectValue,
+      [],
+    )
+    .action(async (options: { config?: string; source: string[] }) => {
+      try {
+        const config = await resolveCommandConfig(options);
+        const sources = await listSources({
+          config,
+          env: Bun.env,
+        });
+
+        printSources(sources);
+      } catch (error) {
+        console.error(formatCliError(error));
+        process.exitCode = 1;
+      }
+    });
 
   program
     .command("purge")
     .description("Purge Slopwatch-owned indexed data.")
+    .option("--config <path>", "User-local Slopwatch config path.")
+    .option("--database-url <url>", "Postgres connection URL.")
     .option("--include-config", "Also include local Slopwatch configuration.")
-    .action(scaffoldAction("purge"));
+    .action(
+      async (options: {
+        config?: string;
+        databaseUrl?: string;
+        includeConfig?: boolean;
+      }) => {
+        try {
+          const report = await runPurge({
+            configPath: options.config,
+            env: Bun.env,
+            flags: flagsFromOptions(options),
+            includeConfig: options.includeConfig ?? false,
+          });
+
+          console.log(
+            `Purged Slopwatch-owned indexed data from ${report.indexedData.tables.length} tables.`,
+          );
+
+          if (report.config.removed) {
+            console.log(`Removed config at ${report.config.path}.`);
+          }
+        } catch (error) {
+          console.error(formatCliError(error));
+          process.exitCode = 1;
+        }
+      },
+    );
 
   return program;
+}
+
+async function resolveCommandConfig(options: {
+  config?: string;
+  databaseUrl?: string;
+  source?: string[];
+}): Promise<RuntimeConfig> {
+  const userConfig = await readUserConfig(
+    options.config ?? defaultUserConfigPath(),
+  );
+
+  if (userConfig.status === "malformed") {
+    throw new Error(userConfig.message);
+  }
+
+  return resolveRuntimeConfig({
+    userConfig: userConfig.config,
+    env: Bun.env,
+    flags: flagsFromOptions(options),
+  });
+}
+
+function flagsFromOptions(options: {
+  databaseUrl?: string;
+  source?: string[];
+}): RuntimeConfigFlags {
+  return {
+    databaseUrl: options.databaseUrl,
+    sources: sourceFlags(options.source),
+  };
+}
+
+function sourceFlags(paths: string[] | undefined): SourceConfig[] | undefined {
+  if (!paths || paths.length === 0) {
+    return undefined;
+  }
+
+  return paths.map((path, index) => ({
+    sourceKey: index === 0 ? "codex-local:default" : `codex-local:${path}`,
+    sourceType: "codex-local",
+    path,
+  }));
+}
+
+function collectValue(value: string, previous: string[]) {
+  previous.push(value);
+  return previous;
+}
+
+function printInitReport(report: Awaited<ReturnType<typeof runInit>>) {
+  console.log(
+    `Config ${report.config.created ? "created" : "ready"} at ${report.config.path}.`,
+  );
+  console.log(`Database: ${report.database.status}`);
+  console.log(`Migration: ${report.migration.status}`);
+}
+
+function printDoctorReport(report: Awaited<ReturnType<typeof runDoctor>>) {
+  console.log(
+    `Runtime: ${report.runtime.status} (Bun ${report.runtime.bunVersion})`,
+  );
+  console.log(`Config: ${report.config.status} (${report.config.path})`);
+  console.log(`Database: ${report.database.status}`);
+  console.log(`Migration: ${report.migration.status}`);
+  console.log(`Permissions: ${report.permissions.status}`);
+  console.log(`Sources: ${report.sources.length}`);
+  console.log(`Source format: ${report.sourceFormat.status}`);
+
+  for (const source of report.sources) {
+    console.log(formatSourceLine(source));
+  }
+}
+
+function printSources(sources: Awaited<ReturnType<typeof listSources>>) {
+  if (sources.length === 0) {
+    console.log("No Sources found.");
+    return;
+  }
+
+  for (const source of sources) {
+    console.log(formatSourceLine(source));
+  }
+}
+
+function formatSourceLine(
+  source: Awaited<ReturnType<typeof listSources>>[number],
+) {
+  const origin = `${source.origin}${source.overridden ? " override" : ""}`;
+
+  return [
+    source.sourceKey,
+    source.sourceType,
+    origin,
+    source.health.status,
+    source.format.status,
+    source.path,
+  ].join("\t");
 }
 
 function formatCliError(error: unknown) {
@@ -177,4 +383,6 @@ function formatCliError(error: unknown) {
   return String(error);
 }
 
-await buildProgram().parseAsync();
+if (import.meta.main) {
+  await buildProgram().parseAsync();
+}

@@ -1,9 +1,30 @@
-import { expect, test } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 import { buildNowProjection } from "../src/now/projection";
 import { runNowStatus } from "../src/now/status";
 
 const cliPath = new URL("../src/cli.ts", import.meta.url).pathname;
+let tmpRoots: string[] = [];
+
+async function tempPath(...segments: string[]) {
+  const root = await mkdtemp(join(tmpdir(), "slopwatch-cli-"));
+  tmpRoots.push(root);
+
+  return join(root, ...segments);
+}
+
+afterEach(async () => {
+  const roots = tmpRoots;
+  tmpRoots = [];
+
+  await Promise.all(
+    roots.map((root) => rm(root, { recursive: true, force: true })),
+  );
+});
 
 async function runCli(
   args: string[],
@@ -80,6 +101,48 @@ test("collect exposes an explicit Raw payload opt-in", async () => {
 
   expect(result.exitCode).toBe(0);
   expect(result.stdout).toContain("--include-content");
+});
+
+test("init creates local config without copying DATABASE_URL secrets", async () => {
+  const configPath = await tempPath("config", "slopwatch", "config.json");
+  const result = await runCli(["init", "--config", configPath], {
+    DATABASE_URL: "postgres://user:secret@localhost/slopwatch_cli",
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("Config created");
+  await expect(readFile(configPath, "utf8")).resolves.toBe(
+    `${JSON.stringify({ sources: [] }, null, 2)}\n`,
+  );
+});
+
+test("sources lists Source overrides with health", async () => {
+  const detectedPath = await tempPath("detected-codex-source");
+  const sourcePath = await tempPath("override-codex-source");
+  await mkdir(join(detectedPath, "sessions"), { recursive: true });
+  await mkdir(join(sourcePath, "sessions"), { recursive: true });
+
+  const result = await runCli(["sources", "--source", sourcePath], {
+    CODEX_HOME: detectedPath,
+  });
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain(
+    `codex-local:default\tcodex-local\tconfigured override\tok\tok\t${sourcePath}`,
+  );
+  expect(result.stdout).toContain(sourcePath);
+  expect(result.stdout).not.toContain(detectedPath);
+});
+
+test("doctor reports individual Source health", async () => {
+  const missingSourcePath = await tempPath("missing-codex-source");
+
+  const result = await runCli(["doctor", "--source", missingSourcePath]);
+
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("Sources: 1");
+  expect(result.stdout).toContain(missingSourcePath);
+  expect(result.stdout).toContain("missing");
 });
 
 test("status runner prints the shared Now projection", async () => {
