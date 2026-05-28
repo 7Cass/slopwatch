@@ -610,6 +610,69 @@ describe("collection", () => {
     expect(collectionStoreClosed).toBe(true);
   });
 
+  test("real Codex collection runner infers Blocked from waiting evidence", async () => {
+    const store = new InMemoryCollectionStore();
+    const fixtureRecords = readFixtureSourceRecords().map((record) => ({
+      ...record,
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: "/sources/configured-codex",
+        healthStatus: "ok",
+      },
+      workUnit: {
+        ...record.workUnit,
+        identityKey: "codex-local:default:thread-main",
+      },
+      event: {
+        ...record.event,
+        sourceLocator: record.event.sourceLocator.replace(
+          "fixture/codex-local-demo/session-001/fork-main",
+          "sessions/2026/05/27/rollout-thread-main.jsonl",
+        ),
+        metadata: record.event.sourceLocator.endsWith("/0003")
+          ? {
+              action: "waiting for approval",
+              waitingFor: "approval",
+              toolCalls: 1,
+            }
+          : record.event.metadata,
+        parserVersion: "codex-local-v0",
+        sourceVersion: "0.134.0",
+      },
+    }));
+
+    const summary = await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => fixtureRecords,
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    expect(summary).toMatchObject({
+      sourceKeys: ["codex-local:default"],
+      eventsProcessed: 3,
+      workUnitsProcessed: 1,
+    });
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "blocked",
+        explanation:
+          "Blocked because the latest Event shows waiting for approval.",
+      },
+    ]);
+    expect(
+      [...store.events.values()].find((event) =>
+        event.sourceLocator.endsWith("/0003"),
+      )?.metadata,
+    ).toMatchObject({
+      action: "waiting for approval",
+      waitingFor: "approval",
+    });
+  });
+
   test("real Codex backfill deduplicates Source locators and preserves Event versions", async () => {
     const store = new InMemoryCollectionStore();
     const collectionWindow = {

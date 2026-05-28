@@ -340,6 +340,44 @@ test("status runner prints the shared Now projection", async () => {
   expect(lines.join("\n")).not.toContain("detail-only field");
 });
 
+test("status runner prints waiting Agents in the Blocked group", async () => {
+  const lines: string[] = [];
+
+  await runNowStatus({
+    nowProvider: async () =>
+      buildNowProjection({
+        now: new Date("2026-05-01T10:10:00.000Z"),
+        records: [
+          {
+            workUnitId: "work-unit-blocked",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "blocked",
+            confidence: 0.9,
+            explanation:
+              "Blocked because the latest Event shows waiting for approval.",
+            activeTimeMs: 4 * 60 * 1000,
+            lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+            lastAction: "waiting for approval",
+            toolCalls: 1,
+            tokenQuality: "unavailable",
+          },
+        ],
+      }),
+    writeLine: (line) => {
+      lines.push(line);
+    },
+  });
+
+  const output = lines.join("\n");
+
+  expect(output).toContain("Blocked");
+  expect(output).toContain("slopwatch-demo");
+  expect(output).toContain("waiting for approval");
+});
+
 test("status requires DATABASE_URL before reading the Now projection", async () => {
   const result = await runCli(["status"]);
 

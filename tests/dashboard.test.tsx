@@ -46,6 +46,42 @@ const nowFixture: SerializedNowProjection = {
   ],
 };
 
+const blockedNowFixture: SerializedNowProjection = {
+  generatedAt: "2026-05-01T10:10:00.000Z",
+  groups: [
+    {
+      key: "blocked",
+      agents: [
+        {
+          workUnitId: "work-unit-blocked",
+          project: {
+            displayName: "slopwatch-demo",
+            rootPath: "/projects/slopwatch-demo",
+          },
+          state: "blocked",
+          activeTimeMs: 240000,
+          lastActivityAt: "2026-05-01T10:04:00.000Z",
+          lastAction: "waiting for approval",
+          toolCalls: 1,
+          tokenQuality: "unavailable",
+        },
+      ],
+    },
+    {
+      key: "active",
+      agents: [],
+    },
+    {
+      key: "failed",
+      agents: [],
+    },
+    {
+      key: "recently_finished",
+      agents: [],
+    },
+  ],
+};
+
 const agentDetailFixture: SerializedAgentDetail = {
   workUnitId: "work-unit-1",
   project: {
@@ -184,6 +220,19 @@ test("Now screen renders a fixture-backed Agent card", () => {
   expect(markup).toContain("estimated tokens");
   expect(markup).toContain('href="/agents/work-unit-1"');
   expect(markup).not.toContain("/projects/slopwatch-demo");
+});
+
+test("Now screen renders waiting Agents in the Blocked group", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/">
+      <DashboardRoutes initialProjection={blockedNowFixture} />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Blocked");
+  expect(markup).toContain("slopwatch-demo");
+  expect(markup).toContain("waiting for approval");
+  expect(markup).toContain('href="/agents/work-unit-blocked"');
 });
 
 test("Projects route renders recent Projects and links to filtered Agent activity", () => {

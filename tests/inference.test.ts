@@ -77,6 +77,63 @@ describe("WorkUnit inference", () => {
     expect(inference.explanation).toContain("waiting for user input");
   });
 
+  test("infers Blocked from the latest relevant waiting Event", () => {
+    const inference = inferWorkUnit({
+      workUnitId: "work-unit-1",
+      calculatedAt: new Date("2026-05-01T10:10:00.000Z"),
+      events: [
+        {
+          eventType: "assistant_message",
+          observedAt: new Date("2026-05-01T10:04:00.000Z"),
+          metadata: {
+            action: "waiting for approval",
+            waitingFor: "approval",
+          },
+        },
+        {
+          eventType: "token_count",
+          observedAt: new Date("2026-05-01T10:05:00.000Z"),
+          metadata: {
+            action: "reported token count",
+            totalTokens: 120,
+            tokenQuality: "reported",
+          },
+        },
+      ],
+    });
+
+    expect(inference.state).toBe("blocked");
+    expect(inference.explanation).toContain("waiting for approval");
+  });
+
+  test("does not infer Blocked from stale waiting evidence after later activity", () => {
+    const inference = inferWorkUnit({
+      workUnitId: "work-unit-1",
+      calculatedAt: new Date("2026-05-01T10:10:00.000Z"),
+      events: [
+        {
+          eventType: "assistant_message",
+          observedAt: new Date("2026-05-01T10:04:00.000Z"),
+          metadata: {
+            action: "waiting for approval",
+            waitingFor: "approval",
+          },
+        },
+        {
+          eventType: "tool_call",
+          observedAt: new Date("2026-05-01T10:05:00.000Z"),
+          metadata: {
+            action: "called tool",
+            command: "bun test",
+          },
+        },
+      ],
+    });
+
+    expect(inference.state).toBe("active");
+    expect(inference.explanation).toContain("recent activity");
+  });
+
   test("keeps a failed command as an Event when later activity continues", () => {
     const inference = inferWorkUnit({
       workUnitId: "work-unit-1",

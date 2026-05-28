@@ -271,28 +271,38 @@ function toSourceEvent(
   }
 
   if (recordType === "event_msg" && payloadType === "agent_message") {
+    const message = stringValue(payload.message) ?? null;
+    const waitingEvidence = waitingEvidenceFromText(message);
+
     return {
       sourceLocator,
       eventType: "assistant_message",
       observedAt,
-      metadata: {
-        action: "sent assistant message",
+      metadata: pruneUndefined({
+        action: waitingEvidence
+          ? `waiting for ${formatSnakeValue(waitingEvidence)}`
+          : "sent assistant message",
+        waitingFor: waitingEvidence,
         phase: stringValue(payload.phase),
-      },
-      rawPayload: stringValue(payload.message) ?? null,
+      }),
+      rawPayload: message,
       rawPayloadKind: "source_text",
     };
   }
 
   if (recordType === "response_item" && payloadType === "function_call") {
     const argumentsMetadata = parseFunctionArguments(payload.arguments);
+    const waitingEvidence = toolCallWaitingEvidence(argumentsMetadata);
 
     return {
       sourceLocator,
       eventType: "tool_call",
       observedAt,
       metadata: pruneUndefined({
-        action: "called tool",
+        action: waitingEvidence
+          ? `waiting for ${formatSnakeValue(waitingEvidence)}`
+          : "called tool",
+        waitingFor: waitingEvidence,
         toolName: stringValue(payload.name),
         callId: stringValue(payload.call_id),
         command: stringValue(argumentsMetadata.cmd ?? argumentsMetadata.command),
@@ -377,6 +387,8 @@ function messageResponseItemEvent({
 }): ParsedCodexEvent {
   const role = stringValue(payload.role) ?? "unknown";
   const contentText = extractContentText(payload.content);
+  const waitingEvidence =
+    role === "assistant" ? waitingEvidenceFromText(contentText.text) : undefined;
   const eventType =
     role === "assistant"
       ? "assistant_message"
@@ -389,12 +401,14 @@ function messageResponseItemEvent({
     eventType,
     observedAt,
     metadata: pruneUndefined({
-      action:
-        role === "assistant"
+      action: waitingEvidence
+        ? `waiting for ${formatSnakeValue(waitingEvidence)}`
+        : role === "assistant"
           ? "sent assistant message"
           : role === "user"
             ? "received user message"
             : `received ${role} message`,
+      waitingFor: waitingEvidence,
       contentParts: contentText.parts,
     }),
     rawPayload: contentText.text,
@@ -474,6 +488,36 @@ function parseFunctionArguments(value: unknown): Record<string, unknown> {
   } catch {
     return {};
   }
+}
+
+function toolCallWaitingEvidence(argumentsMetadata: Record<string, unknown>) {
+  return argumentsMetadata.sandbox_permissions === "require_escalated"
+    ? "approval"
+    : undefined;
+}
+
+function waitingEvidenceFromText(text: string | null) {
+  if (!text || !/\b(?:waiting|awaiting)\b/i.test(text)) {
+    return undefined;
+  }
+
+  if (/\b(?:user input|your input|input from (?:the )?user)\b/i.test(text)) {
+    return "user_input";
+  }
+
+  if (/\bapproval\b/i.test(text)) {
+    return "approval";
+  }
+
+  if (/\bpermission\b/i.test(text)) {
+    return "permission";
+  }
+
+  if (/\b(?:credentials?|api key|authentication|login)\b/i.test(text)) {
+    return "credentials";
+  }
+
+  return undefined;
 }
 
 function fileTouchMetadata(argumentsMetadata: Record<string, unknown>) {
@@ -591,6 +635,10 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value)
     ? value
     : undefined;
+}
+
+function formatSnakeValue(value: string) {
+  return value.replaceAll("_", " ");
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

@@ -387,6 +387,125 @@ describe("Codex local Source adapter", () => {
     });
   });
 
+  test("normalizes Codex approval waits as explicit Event metadata", async () => {
+    const { sourcePath } = await writeSanitizedCodexSource({
+      extraRolloutRecords: [
+        {
+          timestamp: "2026-05-27T10:03:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "exec_command",
+            call_id: "call-needs-approval",
+            arguments: JSON.stringify({
+              cmd: "git fetch",
+              sandbox_permissions: "require_escalated",
+              justification: "Need network access to fetch remotes.",
+            }),
+          },
+        },
+      ],
+    });
+
+    const records = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: sourcePath,
+      },
+    });
+    const waitingEvent = records.find(
+      (record) => record.event.metadata.callId === "call-needs-approval",
+    );
+
+    expect(waitingEvent?.event.eventType).toBe("tool_call");
+    expect(waitingEvent?.event.metadata).toMatchObject({
+      action: "waiting for approval",
+      waitingFor: "approval",
+      toolName: "exec_command",
+      callId: "call-needs-approval",
+      command: "git fetch",
+      toolCalls: 1,
+    });
+    expect(waitingEvent?.event.rawPayload).toBeNull();
+  });
+
+  test("normalizes assistant message waits without storing message text in metadata", async () => {
+    const { sourcePath } = await writeSanitizedCodexSource({
+      extraRolloutRecords: [
+        {
+          timestamp: "2026-05-27T10:03:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "I am waiting for user input before continuing.",
+          },
+        },
+        {
+          timestamp: "2026-05-27T10:04:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "agent_message",
+            message: "Waiting for permission to read the local Source.",
+          },
+        },
+        {
+          timestamp: "2026-05-27T10:05:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "output_text",
+                text: "Awaiting credentials for the remote API.",
+              },
+            ],
+          },
+        },
+      ],
+    });
+
+    const records = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: sourcePath,
+      },
+    });
+    const waitingEvents = records.filter(
+      (record) => typeof record.event.metadata.waitingFor === "string",
+    );
+
+    expect(
+      waitingEvents.map((record) => ({
+        waitingFor: record.event.metadata.waitingFor,
+        action: record.event.metadata.action,
+        rawPayload: record.event.rawPayload,
+      })),
+    ).toEqual([
+      {
+        waitingFor: "user_input",
+        action: "waiting for user input",
+        rawPayload: "I am waiting for user input before continuing.",
+      },
+      {
+        waitingFor: "permission",
+        action: "waiting for permission",
+        rawPayload: "Waiting for permission to read the local Source.",
+      },
+      {
+        waitingFor: "credentials",
+        action: "waiting for credentials",
+        rawPayload: "Awaiting credentials for the remote API.",
+      },
+    ]);
+    expect(waitingEvents[0]?.event.metadata).not.toHaveProperty("message");
+    expect(waitingEvents[2]?.event.metadata).toMatchObject({
+      contentParts: 1,
+    });
+  });
+
   test("emits idempotent Source locators and identity across repeated reads", async () => {
     const { sourcePath } = await writeSanitizedCodexSource();
     const source = {

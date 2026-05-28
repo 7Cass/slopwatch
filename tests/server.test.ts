@@ -124,6 +124,30 @@ function projectionForAgent(workUnitId: string) {
   });
 }
 
+function projectionForBlockedAgent(workUnitId: string) {
+  return buildNowProjection({
+    now: new Date("2026-05-01T10:10:00.000Z"),
+    records: [
+      {
+        workUnitId,
+        project: {
+          displayName: "slopwatch-demo",
+          rootPath: "/projects/slopwatch-demo",
+        },
+        state: "blocked",
+        confidence: 0.9,
+        explanation:
+          "Blocked because the latest Event shows waiting for approval.",
+        activeTimeMs: 4 * 60 * 1000,
+        lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+        lastAction: "waiting for approval",
+        toolCalls: 1,
+        tokenQuality: "unavailable",
+      },
+    ],
+  });
+}
+
 function detailForAgent(workUnitId: string): AgentDetail {
   return {
     workUnitId,
@@ -434,6 +458,37 @@ test("SSE clients receive a complete Now snapshot on connection", async () => {
       },
     ],
   });
+});
+
+test("SSE Now snapshots include waiting Agents in the Blocked group", async () => {
+  const app = createServerApp({
+    nowProvider: async () => projectionForBlockedAgent("work-unit-blocked"),
+  });
+
+  const response = await app.request("/api/now/events");
+  const [event] = await readSseEvents(response, 1);
+
+  expect(response.status).toBe(200);
+  expect(event?.event).toBe("now");
+  const data = event?.data as {
+    groups?: Array<{
+      key: string;
+      agents: Array<{
+        workUnitId: string;
+        state: string;
+        lastAction?: string;
+      }>;
+    }>;
+  };
+  const blockedGroup = data.groups?.find((group) => group.key === "blocked");
+
+  expect(blockedGroup?.agents).toEqual([
+    expect.objectContaining({
+      workUnitId: "work-unit-blocked",
+      state: "blocked",
+      lastAction: "waiting for approval",
+    }),
+  ]);
 });
 
 test("SSE clients receive coalesced Now updates after relevant changes", async () => {

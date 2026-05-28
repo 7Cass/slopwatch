@@ -56,6 +56,7 @@ export function inferWorkUnit({
   );
   const activeTimeMs = calculateActiveTimeMs(orderedEvents);
   const latestEvent = orderedEvents.at(-1);
+  const latestRelevantEvent = findLast(orderedEvents, isStateRelevantEvent);
 
   if (!latestEvent) {
     return {
@@ -69,7 +70,8 @@ export function inferWorkUnit({
     };
   }
 
-  const waitingEvidence = findWaitingEvidence(latestEvent);
+  const stateEvent = latestRelevantEvent ?? latestEvent;
+  const waitingEvidence = findWaitingEvidence(stateEvent);
 
   if (waitingEvidence) {
     return {
@@ -86,7 +88,7 @@ export function inferWorkUnit({
   const failedEvent = findLast(orderedEvents, isFailureEvent);
   const finishedEvent = findLast(orderedEvents, isFinishedEvent);
 
-  if (isTerminalFailureEvent(latestEvent)) {
+  if (isTerminalFailureEvent(stateEvent)) {
     return {
       workUnitId,
       state: "failed",
@@ -98,7 +100,7 @@ export function inferWorkUnit({
     };
   }
 
-  if (isFinishedEvent(latestEvent)) {
+  if (isFinishedEvent(stateEvent)) {
     return {
       workUnitId,
       state: "finished",
@@ -115,11 +117,11 @@ export function inferWorkUnit({
     state: "active",
     confidence: 0.7,
     explanation:
-      failedEvent && latestEvent.observedAt > failedEvent.observedAt
+      failedEvent && stateEvent.observedAt > failedEvent.observedAt
         ? "Active because later activity continued after a failed Event."
-        : finishedEvent && latestEvent.observedAt > finishedEvent.observedAt
+        : finishedEvent && stateEvent.observedAt > finishedEvent.observedAt
           ? "Active because later activity arrived after completion evidence."
-        : "Active because recent activity was observed.",
+          : "Active because recent activity was observed.",
     activeTimeMs,
     inferenceVersion: workUnitInferenceVersion,
     calculatedAt,
@@ -143,6 +145,10 @@ function findWaitingEvidence(event: InferenceEvent) {
 
 function formatSnakeValue(value: string) {
   return value.replaceAll("_", " ");
+}
+
+function isStateRelevantEvent(event: InferenceEvent) {
+  return event.eventType !== "token_count";
 }
 
 function findLast<T>(values: T[], predicate: (value: T) => boolean) {

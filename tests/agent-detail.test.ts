@@ -115,6 +115,65 @@ describe("Agent detail", () => {
     });
   });
 
+  test("includes blocked inference explanation and waiting Event Source reference", async () => {
+    const detail = await getAgentDetail({
+      store: new InMemoryAgentDetailStore({
+        ...detailRecord,
+        state: "blocked",
+        inference: {
+          confidence: 0.9,
+          explanation:
+            "Blocked because the latest Event shows waiting for approval.",
+          inferenceVersion: "work-unit-inference-v1",
+          calculatedAt: new Date("2026-05-01T10:05:00.000Z"),
+        },
+        events: [
+          {
+            id: "event-waiting",
+            eventType: "tool_call",
+            observedAt: new Date("2026-05-01T10:04:00.000Z"),
+            source: {
+              sourceKey: "codex-local:default",
+              sourceType: "codex-local",
+              sourceLocator:
+                "sessions/2026/05/27/rollout-thread-main.jsonl:4",
+              path: "/sources/configured-codex",
+            },
+            metadata: {
+              action: "waiting for approval",
+              waitingFor: "approval",
+              command: "git fetch",
+            },
+            rawPayload: null,
+          },
+        ],
+      }),
+      workUnitId: "work-unit-1",
+    });
+
+    expect(detail).toMatchObject({
+      state: "blocked",
+      inference: {
+        explanation:
+          "Blocked because the latest Event shows waiting for approval.",
+      },
+      events: [
+        {
+          action: "waiting for approval",
+          command: "git fetch",
+          source: {
+            sourceKey: "codex-local:default",
+            sourceLocator:
+              "sessions/2026/05/27/rollout-thread-main.jsonl:4",
+          },
+          metadata: {
+            waitingFor: "approval",
+          },
+        },
+      ],
+    });
+  });
+
   test("provider resolves missing details and closes the store", async () => {
     const store = new InMemoryAgentDetailStore(null);
     const provider = createAgentDetailProvider({
