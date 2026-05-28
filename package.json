@@ -11,7 +11,7 @@
     "cli": "bun run src/cli.ts",
     "dashboard:dev": "vite --host 127.0.0.1",
     "slopwatch": "bun run src/cli.ts",
-    "smoke:e2e": "bun test ./tests/smoke.e2e.tsx --timeout 30000",
+    "smoke:e2e": "bun test ./tests/smoke.e2e.tsx --timeout 120000",
     "check": "tsc --noEmit",
     "test": "bun test"
   },

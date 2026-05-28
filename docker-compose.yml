@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: slopwatch
+      POSTGRES_USER: slopwatch
+      POSTGRES_PASSWORD: slopwatch
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - slopwatch-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready --username slopwatch --dbname slopwatch"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  slopwatch-postgres-data:

@@ -13,10 +13,9 @@ import {
   type SerializedAgentDetail,
   type SerializedNowProjection,
 } from "../src/dashboard/App";
+import { withIsolatedPostgres } from "./support/postgres-container";
 
 const cliPath = new URL("../src/cli.ts", import.meta.url).pathname;
-const initdbPath = requirePostgresBinary("initdb");
-const pgCtlPath = requirePostgresBinary("pg_ctl");
 
 const tmpRoots: string[] = [];
 
@@ -191,55 +190,6 @@ type RunningCliServer = {
   stop: () => Promise<void>;
 };
 
-async function withIsolatedPostgres(
-  run: ({ databaseUrl }: { databaseUrl: string }) => Promise<void>,
-) {
-  const root = await tempRoot("slopwatch-postgres-");
-  const dataDir = join(root, "data");
-  const logPath = join(root, "postgres.log");
-  const port = await getAvailablePort();
-  let started = false;
-
-  await runSuccessfulProcess([
-    initdbPath,
-    "-D",
-    dataDir,
-    "--username",
-    "slopwatch",
-  ]);
-
-  try {
-    await runSuccessfulProcess([
-      pgCtlPath,
-      "-D",
-      dataDir,
-      "-o",
-      `-h 127.0.0.1 -p ${port}`,
-      "-l",
-      logPath,
-      "-w",
-      "start",
-    ]);
-    started = true;
-
-    await run({
-      databaseUrl: `postgres://slopwatch@127.0.0.1:${port}/postgres`,
-    });
-  } finally {
-    if (started) {
-      await runSuccessfulProcess([
-        pgCtlPath,
-        "-D",
-        dataDir,
-        "-m",
-        "fast",
-        "-w",
-        "stop",
-      ]);
-    }
-  }
-}
-
 async function startCliServer({
   databaseUrl,
   env,
@@ -325,27 +275,6 @@ async function runProcess(
   });
 
   return { stdout: await stdout, stderr: await stderr, exitCode };
-}
-
-async function runSuccessfulProcess(
-  command: string[],
-  env: ProcessEnv = smokeEnv(),
-) {
-  const result = await runProcess(command, env);
-
-  if (result.exitCode !== 0) {
-    throw new Error(
-      [
-        `${command[0]} exited with ${result.exitCode}.`,
-        result.stdout,
-        result.stderr,
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-  }
-
-  return result;
 }
 
 async function waitForProcessExit(
@@ -501,16 +430,4 @@ function smokeEnv(overrides: ProcessEnv = {}): ProcessEnv {
   delete env.DATABASE_URL;
 
   return env;
-}
-
-function requirePostgresBinary(name: string) {
-  const path = Bun.which(name);
-
-  if (!path) {
-    throw new Error(
-      `The end-to-end smoke test requires ${name} on PATH. Install Postgres locally or run with Postgres.app binaries on PATH.`,
-    );
-  }
-
-  return path;
 }
