@@ -257,6 +257,27 @@ function toSourceEvent(
     };
   }
 
+  if (recordType === "event_msg" && payloadType === "task_complete") {
+    return {
+      sourceLocator,
+      eventType: "task_completed",
+      observedAt:
+        dateFromUnknown(payload.completed_at) ??
+        dateFromUnknown(record.timestamp) ??
+        new Date(0),
+      metadata: pruneUndefined({
+        action: "completed task",
+        status: "finished",
+        terminal: true,
+        turnId: stringValue(payload.turn_id),
+        durationMs: numberValue(payload.duration_ms),
+        timeToFirstTokenMs: numberValue(payload.time_to_first_token_ms),
+      }),
+      rawPayload: stringValue(payload.last_agent_message) ?? null,
+      rawPayloadKind: "source_text",
+    };
+  }
+
   if (recordType === "event_msg" && payloadType === "user_message") {
     return {
       sourceLocator,

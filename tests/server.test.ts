@@ -172,6 +172,30 @@ function projectionForFailedAgent(workUnitId: string) {
   });
 }
 
+function projectionForFinishedAgent(workUnitId: string) {
+  return buildNowProjection({
+    now: new Date("2026-05-01T10:10:00.000Z"),
+    recentlyFinishedWindowMs: 30 * 60 * 1000,
+    records: [
+      {
+        workUnitId,
+        project: {
+          displayName: "slopwatch-demo",
+          rootPath: "/projects/slopwatch-demo",
+        },
+        state: "finished",
+        confidence: 0.9,
+        explanation: "Finished because the final Event has completion evidence.",
+        activeTimeMs: 4 * 60 * 1000,
+        lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+        lastAction: "completed task",
+        toolCalls: 1,
+        tokenQuality: "unavailable",
+      },
+    ],
+  });
+}
+
 function detailForAgent(workUnitId: string): AgentDetail {
   return {
     workUnitId,
@@ -542,6 +566,39 @@ test("SSE Now snapshots include terminally failed Agents in the Failed group", a
       workUnitId: "work-unit-failed",
       state: "failed",
       lastAction: "reported terminal failure",
+    }),
+  ]);
+});
+
+test("SSE Now snapshots include recently Finished Agents in the Recently finished group", async () => {
+  const app = createServerApp({
+    nowProvider: async () => projectionForFinishedAgent("work-unit-finished"),
+  });
+
+  const response = await app.request("/api/now/events");
+  const [event] = await readSseEvents(response, 1);
+
+  expect(response.status).toBe(200);
+  expect(event?.event).toBe("now");
+  const data = event?.data as {
+    groups?: Array<{
+      key: string;
+      agents: Array<{
+        workUnitId: string;
+        state: string;
+        lastAction?: string;
+      }>;
+    }>;
+  };
+  const recentlyFinishedGroup = data.groups?.find(
+    (group) => group.key === "recently_finished",
+  );
+
+  expect(recentlyFinishedGroup?.agents).toEqual([
+    expect.objectContaining({
+      workUnitId: "work-unit-finished",
+      state: "finished",
+      lastAction: "completed task",
     }),
   ]);
 });

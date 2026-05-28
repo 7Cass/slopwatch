@@ -5,6 +5,7 @@ import {
   collectFixtureSource,
   readFixtureSourceRecords,
   type CollectionStore,
+  type SourceRecord,
   type StoredEvent,
   type StoredFork,
   type StoredProject,
@@ -176,6 +177,40 @@ async function configuredCodexSourceList(
     health: { status: "ok" as const },
     format: { status: "ok" as const },
   }));
+}
+
+function codexLocalFixtureRecords({
+  finalEvent,
+}: {
+  finalEvent?: Partial<SourceRecord["event"]>;
+} = {}) {
+  return readFixtureSourceRecords().map((record) => {
+    const isFinalEvent = record.event.sourceLocator.endsWith("/0003");
+
+    return {
+      ...record,
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: "/sources/configured-codex",
+        healthStatus: "ok",
+      },
+      workUnit: {
+        ...record.workUnit,
+        identityKey: "codex-local:default:thread-main",
+      },
+      event: {
+        ...record.event,
+        ...(isFinalEvent ? finalEvent : {}),
+        sourceLocator: record.event.sourceLocator.replace(
+          "fixture/codex-local-demo/session-001/fork-main",
+          "sessions/2026/05/27/rollout-thread-main.jsonl",
+        ),
+        parserVersion: "codex-local-v0",
+        sourceVersion: "0.134.0",
+      },
+    };
+  });
 }
 
 describe("collection", () => {
@@ -743,6 +778,128 @@ describe("collection", () => {
         message: "Codex run failed before producing a final response.",
       },
     });
+  });
+
+  test("real Codex collection runner infers Finished from completion evidence", async () => {
+    const store = new InMemoryCollectionStore();
+    const fixtureRecords = codexLocalFixtureRecords({
+      finalEvent: {
+        eventType: "task_completed",
+        metadata: {
+          action: "completed task",
+          status: "finished",
+          terminal: true,
+          turnId: "turn-1",
+          durationMs: 12345,
+          timeToFirstTokenMs: 321,
+        },
+        rawPayload: "Private final assistant answer.",
+        rawPayloadKind: "source_text",
+      },
+    });
+
+    const summary = await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => fixtureRecords,
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    expect(summary).toMatchObject({
+      sourceKeys: ["codex-local:default"],
+      eventsProcessed: 3,
+      workUnitsProcessed: 1,
+    });
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "finished",
+        explanation: "Finished because the final Event has completion evidence.",
+      },
+    ]);
+    expect(
+      [...store.events.values()].find((event) =>
+        event.sourceLocator.endsWith("/0003"),
+      ),
+    ).toMatchObject({
+      eventType: "task_completed",
+      metadata: {
+        action: "completed task",
+        status: "finished",
+        terminal: true,
+        turnId: "turn-1",
+        durationMs: 12345,
+        timeToFirstTokenMs: 321,
+      },
+      rawPayload: null,
+    });
+  });
+
+  test("real Codex collection runner recalculates Finished back to Active after later Events", async () => {
+    const store = new InMemoryCollectionStore();
+    const finishedRecords = codexLocalFixtureRecords({
+      finalEvent: {
+        eventType: "task_completed",
+        metadata: {
+          action: "completed task",
+          status: "finished",
+          terminal: true,
+        },
+      },
+    });
+    const lastFinishedRecord = finishedRecords.at(-1);
+
+    if (!lastFinishedRecord) {
+      throw new Error("Expected fixture records to include a final Event.");
+    }
+
+    await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => finishedRecords,
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "finished",
+      },
+    ]);
+
+    await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => [
+        ...finishedRecords,
+        {
+          ...lastFinishedRecord,
+          event: {
+            ...lastFinishedRecord.event,
+            sourceLocator: "sessions/2026/05/27/rollout-thread-main.jsonl/0004",
+            eventType: "assistant_message",
+            observedAt: new Date("2026-05-01T10:05:00.000Z"),
+            metadata: {
+              action: "reported progress after completion",
+            },
+            rawPayload: null,
+          },
+        },
+      ],
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    expect([...store.inferences.values()]).toMatchObject([
+      {
+        state: "active",
+        explanation:
+          "Active because later activity arrived after completion evidence.",
+      },
+    ]);
+    expect(store.events.size).toBe(4);
   });
 
   test("real Codex backfill deduplicates Source locators and preserves Event versions", async () => {

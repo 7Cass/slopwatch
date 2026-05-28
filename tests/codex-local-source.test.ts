@@ -467,6 +467,56 @@ describe("Codex local Source adapter", () => {
     expect(failureEvent?.event.rawPayload).toBeNull();
   });
 
+  test("normalizes Codex task completion records as Finished Event metadata", async () => {
+    const { sourcePath } = await writeSanitizedCodexSource({
+      extraRolloutRecords: [
+        {
+          timestamp: "2026-05-27T10:03:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "task_complete",
+            turn_id: "turn-1",
+            completed_at: "2026-05-27T10:03:12.000Z",
+            duration_ms: 12345,
+            time_to_first_token_ms: 321,
+            last_agent_message: "Private final assistant answer.",
+          },
+        },
+      ],
+    });
+
+    const records = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: sourcePath,
+      },
+    });
+    const completionEvent = records.find((record) =>
+      record.event.sourceLocator.endsWith(":4"),
+    );
+
+    expect(completionEvent?.event.eventType).toBe("task_completed");
+    expect(completionEvent?.event.observedAt).toEqual(
+      new Date("2026-05-27T10:03:12.000Z"),
+    );
+    expect(completionEvent?.event.metadata).toEqual({
+      action: "completed task",
+      status: "finished",
+      terminal: true,
+      turnId: "turn-1",
+      durationMs: 12345,
+      timeToFirstTokenMs: 321,
+    });
+    expect(completionEvent?.event.metadata).not.toHaveProperty(
+      "lastAgentMessage",
+    );
+    expect(completionEvent?.event.rawPayload).toBe(
+      "Private final assistant answer.",
+    );
+    expect(completionEvent?.event.rawPayloadKind).toBe("source_text");
+  });
+
   test("normalizes assistant message waits without storing message text in metadata", async () => {
     const { sourcePath } = await writeSanitizedCodexSource({
       extraRolloutRecords: [

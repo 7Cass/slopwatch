@@ -333,4 +333,55 @@ describe("Now projection", () => {
     expect(lines.join("\n")).toContain("Failed");
     expect(lines.join("\n")).toContain("reported terminal failure");
   });
+
+  test("API and status show recently Finished Agents in the Recently finished group", async () => {
+    const projection = buildNowProjection({
+      now: new Date("2026-05-01T10:10:00.000Z"),
+      recentlyFinishedWindowMs: 30 * 60 * 1000,
+      records: [
+        sourceRecord({
+          workUnitId: "finished",
+          state: "finished",
+          lastActivityAt: new Date("2026-05-01T10:05:00.000Z"),
+          lastAction: "completed task",
+        }),
+      ],
+    });
+    const nowProvider = async () => projection;
+    const app = createServerApp({ nowProvider });
+    const lines: string[] = [];
+
+    const response = await app.request("/api/now");
+    await runNowStatus({
+      nowProvider,
+      writeLine: (line) => {
+        lines.push(line);
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      groups: Array<{
+        key: string;
+        agents: Array<{
+          workUnitId: string;
+          state: string;
+          lastAction?: string;
+        }>;
+      }>;
+    };
+    const recentlyFinishedGroup = body.groups.find(
+      (group) => group.key === "recently_finished",
+    );
+
+    expect(recentlyFinishedGroup?.agents).toEqual([
+      expect.objectContaining({
+        workUnitId: "finished",
+        state: "finished",
+        lastAction: "completed task",
+      }),
+    ]);
+    expect(lines.join("\n")).toContain("Recently finished");
+    expect(lines.join("\n")).toContain("completed task");
+  });
 });

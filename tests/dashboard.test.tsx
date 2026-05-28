@@ -118,6 +118,42 @@ const failedNowFixture: SerializedNowProjection = {
   ],
 };
 
+const finishedNowFixture: SerializedNowProjection = {
+  generatedAt: "2026-05-01T10:10:00.000Z",
+  groups: [
+    {
+      key: "blocked",
+      agents: [],
+    },
+    {
+      key: "active",
+      agents: [],
+    },
+    {
+      key: "failed",
+      agents: [],
+    },
+    {
+      key: "recently_finished",
+      agents: [
+        {
+          workUnitId: "work-unit-finished",
+          project: {
+            displayName: "slopwatch-demo",
+            rootPath: "/projects/slopwatch-demo",
+          },
+          state: "finished",
+          activeTimeMs: 240000,
+          lastActivityAt: "2026-05-01T10:04:00.000Z",
+          lastAction: "completed task",
+          toolCalls: 1,
+          tokenQuality: "unavailable",
+        },
+      ],
+    },
+  ],
+};
+
 const failedAgentDetailFixture: SerializedAgentDetail = {
   workUnitId: "work-unit-failed",
   project: {
@@ -322,6 +358,20 @@ test("Now screen renders terminally failed Agents in the Failed group", () => {
   expect(markup).toContain("slopwatch-demo");
   expect(markup).toContain("reported terminal failure");
   expect(markup).toContain('href="/agents/work-unit-failed"');
+});
+
+test("Now screen renders recently Finished Agents in the Recently finished group", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/">
+      <DashboardRoutes initialProjection={finishedNowFixture} />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Recently finished");
+  expect(markup).toContain("Completed in the recent window");
+  expect(markup).toContain("slopwatch-demo");
+  expect(markup).toContain("completed task");
+  expect(markup).toContain('href="/agents/work-unit-finished"');
 });
 
 test("Agent detail route renders Failed inference and terminal failure Event", () => {
