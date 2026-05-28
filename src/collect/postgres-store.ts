@@ -1,3 +1,4 @@
+import { and, eq } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
 
@@ -117,6 +118,35 @@ export class PostgresCollectionStore implements CollectionStore {
       .returning();
 
     return requireReturnedRow(fork, "fork");
+  }
+
+  async findForkBySourceIdentity({
+    sourceId,
+    sourceForkId,
+  }: {
+    sourceId: string;
+    sourceForkId: string;
+  }): Promise<StoredFork | null> {
+    const [fork] = await this.database
+      .select({
+        id: forks.id,
+        sessionId: forks.sessionId,
+        sourceForkId: forks.sourceForkId,
+        originForkId: forks.originForkId,
+        startedAt: forks.startedAt,
+        lastObservedAt: forks.lastObservedAt,
+      })
+      .from(forks)
+      .innerJoin(sessions, eq(forks.sessionId, sessions.id))
+      .where(
+        and(
+          eq(sessions.sourceId, sourceId),
+          eq(forks.sourceForkId, sourceForkId),
+        ),
+      )
+      .limit(1);
+
+    return fork ?? null;
   }
 
   async upsertWorkUnit(

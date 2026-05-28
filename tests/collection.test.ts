@@ -14,6 +14,11 @@ import {
   type StoredWorkUnit,
 } from "../src/collect/fixture";
 import {
+  getAgentDetail,
+  type AgentDetailRecord,
+  type AgentDetailStore,
+} from "../src/agents/detail";
+import {
   runCodexLocalCollection,
   runFixtureCollection,
 } from "../src/collect/run";
@@ -22,8 +27,16 @@ import type {
   InferenceStore,
   WorkUnitInference,
 } from "../src/infer/work-unit";
+import {
+  getNowProjection,
+  type NowProjectionSourceRecord,
+  type NowProjectionStore,
+  type TokenQuality,
+} from "../src/now/projection";
 
-class InMemoryCollectionStore implements CollectionStore, InferenceStore {
+class InMemoryCollectionStore
+  implements CollectionStore, InferenceStore, AgentDetailStore, NowProjectionStore
+{
   private nextId = 1;
   readonly sources = new Map<string, StoredSource>();
   readonly projects = new Map<string, StoredProject>();
@@ -83,6 +96,26 @@ class InMemoryCollectionStore implements CollectionStore, InferenceStore {
     return fork;
   }
 
+  async findForkBySourceIdentity({
+    sourceId,
+    sourceForkId,
+  }: {
+    sourceId: string;
+    sourceForkId: string;
+  }) {
+    return (
+      [...this.forks.values()].find((fork) => {
+        const session = [...this.sessions.values()].find(
+          (candidate) => candidate.id === fork.sessionId,
+        );
+
+        return (
+          session?.sourceId === sourceId && fork.sourceForkId === sourceForkId
+        );
+      }) ?? null
+    );
+  }
+
   async upsertWorkUnit(
     input: Parameters<CollectionStore["upsertWorkUnit"]>[0],
   ) {
@@ -129,9 +162,139 @@ class InMemoryCollectionStore implements CollectionStore, InferenceStore {
     return inference;
   }
 
+  async getAgentDetailRecord(
+    workUnitId: string,
+  ): Promise<AgentDetailRecord | null> {
+    const workUnit = [...this.workUnits.values()].find(
+      (candidate) => candidate.id === workUnitId,
+    );
+    const project = workUnit
+      ? [...this.projects.values()].find(
+          (candidate) => candidate.id === workUnit.projectId,
+        )
+      : undefined;
+    const inference = this.inferences.get(workUnitId);
+
+    if (!workUnit || !project || !inference) {
+      return null;
+    }
+
+    const fork = workUnit.forkId
+      ? [...this.forks.values()].find(
+          (candidate) => candidate.id === workUnit.forkId,
+        )
+      : undefined;
+    const originFork = fork?.originForkId
+      ? [...this.forks.values()].find(
+          (candidate) => candidate.id === fork.originForkId,
+        )
+      : undefined;
+
+    return {
+      workUnitId,
+      project: {
+        displayName: project.displayName,
+        rootPath: project.rootPath,
+      },
+      state: inference.state,
+      activeTimeMs: inference.activeTimeMs,
+      lastActivityAt: workUnit.lastObservedAt ?? inference.calculatedAt,
+      inference: {
+        confidence: inference.confidence,
+        explanation: inference.explanation,
+        inferenceVersion: inference.inferenceVersion,
+        calculatedAt: inference.calculatedAt,
+      },
+      forkOrigin: fork
+        ? {
+            sourceForkId: fork.sourceForkId,
+            originForkId: originFork?.sourceForkId ?? fork.originForkId ?? null,
+          }
+        : undefined,
+      events: [...this.events.values()]
+        .filter((event) => event.workUnitId === workUnitId)
+        .map((event) => {
+          const source = [...this.sources.values()].find(
+            (candidate) => candidate.id === event.sourceId,
+          );
+
+          if (!source) {
+            throw new Error("Expected Event source to be persisted.");
+          }
+
+          return {
+            id: event.id,
+            eventType: event.eventType,
+            observedAt: event.observedAt,
+            source: {
+              sourceKey: source.sourceKey,
+              sourceType: source.sourceType,
+              sourceLocator: event.sourceLocator,
+              path: source.path,
+            },
+            metadata: event.metadata,
+            rawPayload: event.rawPayload,
+          };
+        }),
+    };
+  }
+
+  async listNowProjectionRecords(): Promise<NowProjectionSourceRecord[]> {
+    return [...this.workUnits.values()].map((workUnit) => {
+      const project = [...this.projects.values()].find(
+        (candidate) => candidate.id === workUnit.projectId,
+      );
+      const inference = this.inferences.get(workUnit.id);
+      const latestEvent = [...this.events.values()]
+        .filter((event) => event.workUnitId === workUnit.id)
+        .sort(
+          (left, right) =>
+            right.observedAt.getTime() - left.observedAt.getTime(),
+        )[0];
+
+      if (!project || !inference) {
+        throw new Error("Expected WorkUnit projection dependencies.");
+      }
+
+      return {
+        workUnitId: workUnit.id,
+        project: {
+          displayName: project.displayName,
+          rootPath: project.rootPath,
+        },
+        state: inference.state,
+        confidence: inference.confidence,
+        explanation: inference.explanation,
+        activeTimeMs: inference.activeTimeMs,
+        lastActivityAt:
+          workUnit.lastObservedAt ??
+          latestEvent?.observedAt ??
+          inference.calculatedAt,
+        lastAction:
+          readString(latestEvent?.metadata.action) ?? latestEvent?.eventType,
+        toolCalls: readNumber(latestEvent?.metadata.toolCalls),
+        tokenQuality: readTokenQuality(latestEvent?.metadata.tokenQuality),
+      };
+    });
+  }
+
   private allocateId() {
     return String(this.nextId++);
   }
+}
+
+function readString(value: unknown) {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readNumber(value: unknown) {
+  return typeof value === "number" ? value : undefined;
+}
+
+function readTokenQuality(value: unknown): TokenQuality | undefined {
+  return value === "real" || value === "estimated" || value === "unavailable"
+    ? value
+    : undefined;
 }
 
 function firstFixtureRecord() {
@@ -211,6 +374,125 @@ function codexLocalFixtureRecords({
       },
     };
   });
+}
+
+function codexForkRelationshipRecords(): SourceRecord[] {
+  const source = {
+    sourceKey: "codex-local:default",
+    sourceType: "codex-local",
+    path: "/sources/configured-codex",
+    healthStatus: "ok",
+  };
+  const project = {
+    projectKey: "local:/projects/slopwatch-demo",
+    rootPath: "/projects/slopwatch-demo",
+    displayName: "slopwatch-demo",
+  };
+
+  return [
+    codexForkRelationshipRecord({
+      source,
+      project,
+      sourceForkId: "thread-parent",
+      originForkId: null,
+      observedAt: new Date("2026-05-27T10:00:00.000Z"),
+      sourceLocator:
+        "sessions/2026/05/27/rollout-thread-parent.jsonl:1",
+    }),
+    codexForkRelationshipRecord({
+      source,
+      project,
+      sourceForkId: "thread-child",
+      originForkId: "thread-parent",
+      observedAt: new Date("2026-05-27T10:01:00.000Z"),
+      sourceLocator:
+        "sessions/2026/05/27/rollout-thread-child.jsonl:1",
+    }),
+  ];
+}
+
+function codexForkRelationshipRecord({
+  source,
+  project,
+  sourceForkId,
+  originForkId,
+  observedAt,
+  sourceLocator,
+}: {
+  source: SourceRecord["source"];
+  project: SourceRecord["project"];
+  sourceForkId: string;
+  originForkId: string | null;
+  observedAt: Date;
+  sourceLocator: string;
+}): SourceRecord {
+  return {
+    source,
+    project,
+    session: {
+      sourceSessionId: sourceForkId,
+      startedAt: observedAt,
+      lastObservedAt: observedAt,
+    },
+    fork: {
+      sourceForkId,
+      originForkId,
+      startedAt: observedAt,
+      lastObservedAt: observedAt,
+    },
+    workUnit: {
+      identityKey: `codex-local:default:${sourceForkId}`,
+      firstObservedAt: observedAt,
+      lastObservedAt: observedAt,
+    },
+    event: {
+      sourceLocator,
+      eventType: "assistant_message",
+      observedAt,
+      metadata: {
+        action: "reported progress",
+        toolCalls: 0,
+      },
+      rawPayload: null,
+      parserVersion: "codex-local-v0",
+      sourceVersion: "0.134.0",
+    },
+  };
+}
+
+async function collectCodexRecords({
+  store,
+  records,
+}: {
+  store: InMemoryCollectionStore;
+  records: SourceRecord[];
+}) {
+  return runCodexLocalCollection({
+    config: codexCollectionConfig(),
+    env: { CODEX_HOME: "/sources/detected-codex" },
+    sourceList: configuredCodexSourceList,
+    sourceReader: async () => records,
+    storeFactory: () => store,
+    inferenceStoreFactory: () => store,
+  });
+}
+
+function findForkBySourceForkId(
+  store: InMemoryCollectionStore,
+  sourceForkId: string,
+) {
+  return [...store.forks.values()].find(
+    (fork) => fork.sourceForkId === sourceForkId,
+  );
+}
+
+function findWorkUnitByIdentityKey(
+  store: InMemoryCollectionStore,
+  identityKey: string,
+) {
+  return [...store.workUnits.values()].find(
+    (workUnit) => workUnit.identityKey === identityKey,
+  );
 }
 
 describe("collection", () => {
@@ -1017,5 +1299,116 @@ describe("collection", () => {
     });
     expect(store.events.size).toBe(0);
     expect(store.inferences.size).toBe(0);
+  });
+
+  test("real Codex collection links a child Fork to an already persisted origin Fork", async () => {
+    const store = new InMemoryCollectionStore();
+    const [parentRecord, childRecord] = codexForkRelationshipRecords();
+
+    if (!parentRecord || !childRecord) {
+      throw new Error("Expected parent and child Fork records.");
+    }
+
+    await collectCodexRecords({ store, records: [parentRecord] });
+    const parentFork = findForkBySourceForkId(store, "thread-parent");
+
+    const summary = await collectCodexRecords({
+      store,
+      records: [childRecord],
+    });
+
+    expect(summary).toMatchObject({
+      sourceKeys: ["codex-local:default"],
+      eventsProcessed: 1,
+      workUnitsProcessed: 1,
+    });
+    expect(store.forks.size).toBe(2);
+    expect(store.workUnits.size).toBe(2);
+    expect(store.events.size).toBe(2);
+
+    const childFork = findForkBySourceForkId(store, "thread-child");
+
+    expect(parentFork?.originForkId).toBeNull();
+    expect(childFork?.originForkId).toBe(parentFork?.id);
+  });
+
+  test("linked Codex Forks remain separate Now Agents and child detail maps the Source relationship", async () => {
+    const store = new InMemoryCollectionStore();
+    const records = codexForkRelationshipRecords();
+
+    await collectCodexRecords({ store, records });
+
+    const projection = await getNowProjection({
+      store,
+      now: new Date("2026-05-27T10:02:00.000Z"),
+    });
+    const activeAgents =
+      projection.groups.find((group) => group.key === "active")?.agents ?? [];
+
+    expect(activeAgents).toHaveLength(2);
+    expect(activeAgents.map((agent) => agent.project.displayName)).toEqual([
+      "slopwatch-demo",
+      "slopwatch-demo",
+    ]);
+    expect(activeAgents.map((agent) => agent.workUnitId)).toEqual(
+      expect.arrayContaining([...store.workUnits.values()].map(({ id }) => id)),
+    );
+
+    const childWorkUnit = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-child",
+    );
+
+    if (!childWorkUnit) {
+      throw new Error("Expected child Fork WorkUnit to be persisted.");
+    }
+
+    const childDetail = await getAgentDetail({
+      store,
+      workUnitId: childWorkUnit.id,
+    });
+
+    expect(childDetail?.forkOrigin).toEqual({
+      sourceForkId: "thread-child",
+      originForkId: "thread-parent",
+    });
+    expect(childDetail?.events[0]?.source.sourceLocator).toBe(
+      "sessions/2026/05/27/rollout-thread-child.jsonl:1",
+    );
+  });
+
+  test("repeated Codex collection preserves linked Fork relationships without duplication", async () => {
+    const store = new InMemoryCollectionStore();
+    const records = codexForkRelationshipRecords();
+
+    await collectCodexRecords({ store, records });
+
+    const parentFork = findForkBySourceForkId(store, "thread-parent");
+
+    if (!parentFork) {
+      throw new Error("Expected parent Fork to be persisted.");
+    }
+
+    const forkIds = [...store.forks.values()].map((fork) => fork.id);
+    const workUnitIds = [...store.workUnits.values()].map(
+      (workUnit) => workUnit.id,
+    );
+    const eventIds = [...store.events.values()].map((event) => event.id);
+
+    await collectCodexRecords({ store, records });
+
+    expect([...store.forks.values()].map((fork) => fork.id)).toEqual(forkIds);
+    expect([...store.workUnits.values()].map((workUnit) => workUnit.id)).toEqual(
+      workUnitIds,
+    );
+    expect([...store.events.values()].map((event) => event.id)).toEqual(
+      eventIds,
+    );
+    expect(store.forks.size).toBe(2);
+    expect(store.workUnits.size).toBe(2);
+    expect(store.events.size).toBe(2);
+    expect(findForkBySourceForkId(store, "thread-child")?.originForkId).toBe(
+      parentFork.id,
+    );
   });
 });

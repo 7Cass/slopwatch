@@ -74,6 +74,10 @@ export type CollectionStore = {
   upsertProject: (input: Omit<StoredProject, "id">) => Promise<StoredProject>;
   upsertSession: (input: Omit<StoredSession, "id">) => Promise<StoredSession>;
   upsertFork: (input: Omit<StoredFork, "id">) => Promise<StoredFork>;
+  findForkBySourceIdentity: (input: {
+    sourceId: string;
+    sourceForkId: string;
+  }) => Promise<StoredFork | null>;
   upsertWorkUnit: (
     input: Omit<StoredWorkUnit, "id">,
   ) => Promise<StoredWorkUnit>;
@@ -144,6 +148,13 @@ export async function collectSourceRecords({
   const recordsInWindow = records.filter((record) =>
     isInsideCollectionWindow(record.event.observedAt, collectionWindow),
   );
+  const forkIdsBySourceIdentity = new Map<string, string>();
+  const preparedRecords: Array<{
+    record: SourceRecord;
+    source: StoredSource;
+    project: StoredProject;
+    session: StoredSession;
+  }> = [];
 
   for (const record of recordsInWindow) {
     const source = await store.upsertSource(record.source);
@@ -153,8 +164,33 @@ export async function collectSourceRecords({
       sourceId: source.id,
       projectId: project.id,
     });
+
     const fork = await store.upsertFork({
       ...record.fork,
+      originForkId: null,
+      sessionId: session.id,
+    });
+
+    forkIdsBySourceIdentity.set(
+      sourceForkIdentityKey({
+        sourceId: source.id,
+        sourceForkId: fork.sourceForkId,
+      }),
+      fork.id,
+    );
+    preparedRecords.push({ record, source, project, session });
+  }
+
+  for (const { record, source, project, session } of preparedRecords) {
+    const originForkId = await resolveOriginForkId({
+      store,
+      sourceId: source.id,
+      sourceForkId: record.fork.originForkId ?? null,
+      observedForkIds: forkIdsBySourceIdentity,
+    });
+    const fork = await store.upsertFork({
+      ...record.fork,
+      originForkId,
       sessionId: session.id,
     });
     const workUnit = await store.upsertWorkUnit({
@@ -189,6 +225,49 @@ export async function collectSourceRecords({
     workUnitIds: [...processedWorkUnitIds],
     collectionWindow,
   };
+}
+
+async function resolveOriginForkId({
+  store,
+  sourceId,
+  sourceForkId,
+  observedForkIds,
+}: {
+  store: CollectionStore;
+  sourceId: string;
+  sourceForkId: string | null;
+  observedForkIds: Map<string, string>;
+}) {
+  if (!sourceForkId) {
+    return null;
+  }
+
+  const observedForkId = observedForkIds.get(
+    sourceForkIdentityKey({ sourceId, sourceForkId }),
+  );
+
+  if (observedForkId) {
+    return observedForkId;
+  }
+
+  return (
+    (
+      await store.findForkBySourceIdentity({
+        sourceId,
+        sourceForkId,
+      })
+    )?.id ?? null
+  );
+}
+
+function sourceForkIdentityKey({
+  sourceId,
+  sourceForkId,
+}: {
+  sourceId: string;
+  sourceForkId: string;
+}) {
+  return `${sourceId}:${sourceForkId}`;
 }
 
 export function readFixtureSourceRecords(): SourceRecord[] {
