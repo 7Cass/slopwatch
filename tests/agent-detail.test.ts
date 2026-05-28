@@ -235,6 +235,58 @@ describe("Agent detail", () => {
     });
   });
 
+  test("exposes reported token metadata without financial cost estimates", async () => {
+    const detail = await getAgentDetail({
+      store: new InMemoryAgentDetailStore({
+        ...detailRecord,
+        events: [
+          {
+            id: "event-token-count",
+            eventType: "token_count",
+            observedAt: new Date("2026-05-01T10:04:00.000Z"),
+            source: {
+              sourceKey: "codex-local:default",
+              sourceType: "codex-local",
+              sourceLocator:
+                "sessions/2026/05/27/rollout-thread-main.jsonl:5",
+              path: "/sources/configured-codex",
+            },
+            metadata: {
+              action: "reported token count",
+              inputTokens: 100,
+              cachedInputTokens: 20,
+              outputTokens: 30,
+              reasoningOutputTokens: 10,
+              totalTokens: 130,
+              modelContextWindow: 258400,
+              tokenQuality: "reported",
+            },
+            rawPayload: null,
+          },
+        ],
+      }),
+      workUnitId: "work-unit-1",
+    });
+
+    expect(detail?.events[0]).toMatchObject({
+      eventType: "token_count",
+      action: "reported token count",
+      metadata: {
+        inputTokens: 100,
+        cachedInputTokens: 20,
+        outputTokens: 30,
+        reasoningOutputTokens: 10,
+        totalTokens: 130,
+        modelContextWindow: 258400,
+        tokenQuality: "reported",
+      },
+      rawPayload: null,
+    });
+    expect(detail?.events[0]?.metadata).not.toHaveProperty("cost");
+    expect(detail?.events[0]?.metadata).not.toHaveProperty("costEstimate");
+    expect(detail?.events[0]?.metadata).not.toHaveProperty("currency");
+  });
+
   test("provider resolves missing details and closes the store", async () => {
     const store = new InMemoryAgentDetailStore(null);
     const provider = createAgentDetailProvider({

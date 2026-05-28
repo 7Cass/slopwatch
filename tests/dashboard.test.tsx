@@ -402,6 +402,31 @@ test("Now screen renders a fixture-backed Agent card", () => {
   expect(markup).not.toContain("/projects/slopwatch-demo");
 });
 
+test("Now screen renders reported token availability", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/">
+      <DashboardRoutes
+        initialProjection={{
+          ...nowFixture,
+          groups: nowFixture.groups.map((group) =>
+            group.key === "active"
+              ? {
+                  ...group,
+                  agents: group.agents.map((agent) => ({
+                    ...agent,
+                    tokenQuality: "reported",
+                  })),
+                }
+              : group,
+          ),
+        }}
+      />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("reported tokens");
+});
+
 test("Now screen renders a compact Fork origin indicator on child Agent cards", () => {
   const markup = renderToStaticMarkup(
     <StaticRouter location="/">

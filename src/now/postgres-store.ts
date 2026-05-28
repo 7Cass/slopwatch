@@ -7,8 +7,8 @@ import { events, forks, inferences, projects, workUnits } from "../db/schema";
 import type {
   NowProjectionSourceRecord,
   NowProjectionStore,
-  TokenQuality,
 } from "./projection";
+import { selectTokenQuality } from "./token-quality";
 
 const originForks = alias(forks, "origin_forks");
 const originWorkUnits = alias(workUnits, "origin_work_units");
@@ -48,6 +48,7 @@ export class PostgresNowProjectionStore implements NowProjectionStore {
     return Promise.all(
       rows.map(async (row) => {
         const latestEvent = await this.findLatestEvent(row.workUnitId);
+        const tokenQuality = await this.findTokenQuality(row.workUnitId);
         const metadata = latestEvent?.metadata as
           | Record<string, unknown>
           | undefined;
@@ -66,7 +67,7 @@ export class PostgresNowProjectionStore implements NowProjectionStore {
             row.lastObservedAt ?? latestEvent?.observedAt ?? row.calculatedAt,
           lastAction: readString(metadata?.action) ?? latestEvent?.eventType,
           toolCalls: readNumber(metadata?.toolCalls),
-          tokenQuality: readTokenQuality(metadata?.tokenQuality),
+          tokenQuality,
           forkOrigin:
             row.originWorkUnitId &&
             row.originProjectDisplayName &&
@@ -102,6 +103,23 @@ export class PostgresNowProjectionStore implements NowProjectionStore {
 
     return event;
   }
+
+  private async findTokenQuality(workUnitId: string) {
+    const rows = await this.database
+      .select({
+        metadata: events.metadata,
+      })
+      .from(events)
+      .where(eq(events.workUnitId, workUnitId))
+      .orderBy(desc(events.observedAt));
+
+    return selectTokenQuality(
+      rows.map(
+        (row) =>
+          (row.metadata as Record<string, unknown> | undefined)?.tokenQuality,
+      ),
+    );
+  }
 }
 
 export function createPostgresNowProjectionStore(databaseUrl: string) {
@@ -115,10 +133,4 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown) {
   return typeof value === "number" ? value : undefined;
-}
-
-function readTokenQuality(value: unknown): TokenQuality | undefined {
-  return value === "real" || value === "estimated" || value === "unavailable"
-    ? value
-    : undefined;
 }

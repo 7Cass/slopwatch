@@ -6,7 +6,7 @@ export type NowGroupKey =
   | "failed"
   | "recently_finished";
 
-export type TokenQuality = "real" | "estimated" | "unavailable";
+export type TokenQuality = "real" | "reported" | "estimated" | "unavailable";
 
 export type NowForkOriginPresentation = {
   originWorkUnitId: string;

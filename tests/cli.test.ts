@@ -340,6 +340,39 @@ test("status runner prints the shared Now projection", async () => {
   expect(lines.join("\n")).not.toContain("detail-only field");
 });
 
+test("status runner prints reported token availability", async () => {
+  const lines: string[] = [];
+
+  await runNowStatus({
+    nowProvider: async () =>
+      buildNowProjection({
+        now: new Date("2026-05-01T10:10:00.000Z"),
+        records: [
+          {
+            workUnitId: "work-unit-1",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "active",
+            confidence: 0.7,
+            explanation: "detail-only field",
+            activeTimeMs: 4 * 60 * 1000,
+            lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+            lastAction: "reported token count",
+            toolCalls: 1,
+            tokenQuality: "reported",
+          },
+        ],
+      }),
+    writeLine: (line) => {
+      lines.push(line);
+    },
+  });
+
+  expect(lines.join("\n")).toContain("tokens reported");
+});
+
 test("status runner keeps origin and child Fork Agents on separate concise lines", async () => {
   const lines: string[] = [];
 

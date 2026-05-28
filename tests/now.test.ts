@@ -182,6 +182,28 @@ describe("Now projection", () => {
     expect(agent).not.toHaveProperty("explanation");
   });
 
+  test("maps reported token quality onto Agent cards", () => {
+    const projection = buildNowProjection({
+      now: new Date("2026-05-01T10:10:00.000Z"),
+      records: [
+        sourceRecord({
+          workUnitId: "active",
+          state: "active",
+          lastActivityAt: new Date("2026-05-01T10:05:00.000Z"),
+          tokenQuality: "reported",
+        }),
+      ],
+    });
+
+    const [agent] =
+      projection.groups.find((group) => group.key === "active")?.agents ?? [];
+
+    expect(agent).toMatchObject({
+      workUnitId: "active",
+      tokenQuality: "reported",
+    });
+  });
+
   test("reads the shared Now projection through the store boundary", async () => {
     const store: NowProjectionStore = {
       listNowProjectionRecords: async () => [

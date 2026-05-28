@@ -31,8 +31,8 @@ import {
   getNowProjection,
   type NowProjectionSourceRecord,
   type NowProjectionStore,
-  type TokenQuality,
 } from "../src/now/projection";
+import { selectTokenQuality } from "../src/now/token-quality";
 
 class InMemoryCollectionStore
   implements CollectionStore, InferenceStore, AgentDetailStore, NowProjectionStore
@@ -287,8 +287,10 @@ class InMemoryCollectionStore
         (candidate) => candidate.id === workUnit.projectId,
       );
       const inference = this.inferences.get(workUnit.id);
-      const latestEvent = [...this.events.values()]
-        .filter((event) => event.workUnitId === workUnit.id)
+      const workUnitEvents = [...this.events.values()].filter(
+        (event) => event.workUnitId === workUnit.id,
+      );
+      const latestEvent = workUnitEvents
         .sort(
           (left, right) =>
             right.observedAt.getTime() - left.observedAt.getTime(),
@@ -336,7 +338,14 @@ class InMemoryCollectionStore
         lastAction:
           readString(latestEvent?.metadata.action) ?? latestEvent?.eventType,
         toolCalls: readNumber(latestEvent?.metadata.toolCalls),
-        tokenQuality: readTokenQuality(latestEvent?.metadata.tokenQuality),
+        tokenQuality: selectTokenQuality(
+          workUnitEvents
+            .sort(
+              (left, right) =>
+                right.observedAt.getTime() - left.observedAt.getTime(),
+            )
+            .map((event) => event.metadata.tokenQuality),
+        ),
         forkOrigin:
           originWorkUnit && originProject
             ? {
@@ -362,12 +371,6 @@ function readString(value: unknown) {
 
 function readNumber(value: unknown) {
   return typeof value === "number" ? value : undefined;
-}
-
-function readTokenQuality(value: unknown): TokenQuality | undefined {
-  return value === "real" || value === "estimated" || value === "unavailable"
-    ? value
-    : undefined;
 }
 
 function firstFixtureRecord() {
@@ -1188,6 +1191,111 @@ describe("collection", () => {
         timeToFirstTokenMs: 321,
       },
       rawPayload: null,
+    });
+  });
+
+  test("real Codex metadata-only token count collection reports token availability in Now", async () => {
+    const store = new InMemoryCollectionStore();
+    const fixtureRecords = codexLocalFixtureRecords({
+      finalEvent: {
+        eventType: "token_count",
+        observedAt: new Date("2026-05-01T10:04:00.000Z"),
+        metadata: {
+          action: "reported token count",
+          inputTokens: 100,
+          cachedInputTokens: 20,
+          outputTokens: 30,
+          reasoningOutputTokens: 10,
+          totalTokens: 130,
+          modelContextWindow: 258400,
+          tokenQuality: "reported",
+        },
+        rawPayload: null,
+      },
+    });
+
+    await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => fixtureRecords,
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    const projection = await getNowProjection({
+      store,
+      now: new Date("2026-05-01T10:10:00.000Z"),
+    });
+    const [agent] =
+      projection.groups.find((group) => group.key === "active")?.agents ?? [];
+
+    expect(agent).toMatchObject({
+      tokenQuality: "reported",
+    });
+    expect([...store.events.values()].at(-1)).toMatchObject({
+      eventType: "token_count",
+      rawPayload: null,
+    });
+  });
+
+  test("real Codex Now projection keeps reported token availability after later metadata-only Events", async () => {
+    const store = new InMemoryCollectionStore();
+    const fixtureRecords = codexLocalFixtureRecords({
+      finalEvent: {
+        eventType: "token_count",
+        observedAt: new Date("2026-05-01T10:04:00.000Z"),
+        metadata: {
+          action: "reported token count",
+          inputTokens: 100,
+          outputTokens: 30,
+          totalTokens: 130,
+          tokenQuality: "reported",
+        },
+        rawPayload: null,
+      },
+    });
+    const [lastRecord] = fixtureRecords.slice(-1);
+
+    if (!lastRecord) {
+      throw new Error("Expected Codex fixture records.");
+    }
+
+    await runCodexLocalCollection({
+      config: codexCollectionConfig(),
+      env: { CODEX_HOME: "/sources/detected-codex" },
+      sourceList: configuredCodexSourceList,
+      sourceReader: async () => [
+        ...fixtureRecords,
+        {
+          ...lastRecord,
+          event: {
+            ...lastRecord.event,
+            sourceLocator: "sessions/2026/05/27/rollout-thread-main.jsonl/0004",
+            eventType: "assistant_message",
+            observedAt: new Date("2026-05-01T10:05:00.000Z"),
+            metadata: {
+              action: "reported progress after token count",
+              tokenQuality: "unavailable",
+            },
+            rawPayload: null,
+          },
+        },
+      ],
+      storeFactory: () => store,
+      inferenceStoreFactory: () => store,
+    });
+
+    const projection = await getNowProjection({
+      store,
+      now: new Date("2026-05-01T10:10:00.000Z"),
+    });
+    const [agent] =
+      projection.groups.find((group) => group.key === "active")?.agents ?? [];
+
+    expect(agent).toMatchObject({
+      lastAction: "reported progress after token count",
+      tokenQuality: "reported",
     });
   });
 
