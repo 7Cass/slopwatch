@@ -174,6 +174,67 @@ describe("Agent detail", () => {
     });
   });
 
+  test("includes failed inference explanation and terminal failure Event Source reference", async () => {
+    const detail = await getAgentDetail({
+      store: new InMemoryAgentDetailStore({
+        ...detailRecord,
+        state: "failed",
+        inference: {
+          confidence: 0.9,
+          explanation:
+            "Failed because the final Event has terminal failure evidence.",
+          inferenceVersion: "work-unit-inference-v1",
+          calculatedAt: new Date("2026-05-01T10:05:00.000Z"),
+        },
+        events: [
+          {
+            id: "event-failed",
+            eventType: "error",
+            observedAt: new Date("2026-05-01T10:04:00.000Z"),
+            source: {
+              sourceKey: "codex-local:default",
+              sourceType: "codex-local",
+              sourceLocator:
+                "sessions/2026/05/27/rollout-thread-main.jsonl:4",
+              path: "/sources/configured-codex",
+            },
+            metadata: {
+              action: "reported terminal failure",
+              status: "failed",
+              terminal: true,
+              message: "Codex run failed before producing a final response.",
+            },
+            rawPayload: null,
+          },
+        ],
+      }),
+      workUnitId: "work-unit-1",
+    });
+
+    expect(detail).toMatchObject({
+      state: "failed",
+      inference: {
+        explanation:
+          "Failed because the final Event has terminal failure evidence.",
+      },
+      events: [
+        {
+          action: "reported terminal failure",
+          error: "Codex run failed before producing a final response.",
+          source: {
+            sourceKey: "codex-local:default",
+            sourceLocator:
+              "sessions/2026/05/27/rollout-thread-main.jsonl:4",
+          },
+          metadata: {
+            status: "failed",
+            terminal: true,
+          },
+        },
+      ],
+    });
+  });
+
   test("provider resolves missing details and closes the store", async () => {
     const store = new InMemoryAgentDetailStore(null);
     const provider = createAgentDetailProvider({

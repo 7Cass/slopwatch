@@ -82,6 +82,81 @@ const blockedNowFixture: SerializedNowProjection = {
   ],
 };
 
+const failedNowFixture: SerializedNowProjection = {
+  generatedAt: "2026-05-01T10:10:00.000Z",
+  groups: [
+    {
+      key: "blocked",
+      agents: [],
+    },
+    {
+      key: "active",
+      agents: [],
+    },
+    {
+      key: "failed",
+      agents: [
+        {
+          workUnitId: "work-unit-failed",
+          project: {
+            displayName: "slopwatch-demo",
+            rootPath: "/projects/slopwatch-demo",
+          },
+          state: "failed",
+          activeTimeMs: 240000,
+          lastActivityAt: "2026-05-01T10:04:00.000Z",
+          lastAction: "reported terminal failure",
+          toolCalls: 1,
+          tokenQuality: "unavailable",
+        },
+      ],
+    },
+    {
+      key: "recently_finished",
+      agents: [],
+    },
+  ],
+};
+
+const failedAgentDetailFixture: SerializedAgentDetail = {
+  workUnitId: "work-unit-failed",
+  project: {
+    displayName: "slopwatch-demo",
+    rootPath: "/projects/slopwatch-demo",
+  },
+  state: "failed",
+  activeTimeMs: 240000,
+  lastActivityAt: "2026-05-01T10:04:00.000Z",
+  inference: {
+    confidence: 0.9,
+    explanation: "Failed because the final Event has terminal failure evidence.",
+    inferenceVersion: "work-unit-inference-v1",
+    calculatedAt: "2026-05-01T10:05:00.000Z",
+  },
+  events: [
+    {
+      id: "event-failed",
+      eventType: "error",
+      observedAt: "2026-05-01T10:04:00.000Z",
+      action: "reported terminal failure",
+      error: "Codex run failed before producing a final response.",
+      filesTouched: [],
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        sourceLocator: "sessions/2026/05/27/rollout-thread-main.jsonl:4",
+        path: "/sources/configured-codex",
+      },
+      metadata: {
+        status: "failed",
+        terminal: true,
+        message: "Codex run failed before producing a final response.",
+      },
+      rawPayload: null,
+    },
+  ],
+};
+
 const agentDetailFixture: SerializedAgentDetail = {
   workUnitId: "work-unit-1",
   project: {
@@ -233,6 +308,43 @@ test("Now screen renders waiting Agents in the Blocked group", () => {
   expect(markup).toContain("slopwatch-demo");
   expect(markup).toContain("waiting for approval");
   expect(markup).toContain('href="/agents/work-unit-blocked"');
+});
+
+test("Now screen renders terminally failed Agents in the Failed group", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/">
+      <DashboardRoutes initialProjection={failedNowFixture} />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Failed");
+  expect(markup).toContain("Needs attention");
+  expect(markup).toContain("slopwatch-demo");
+  expect(markup).toContain("reported terminal failure");
+  expect(markup).toContain('href="/agents/work-unit-failed"');
+});
+
+test("Agent detail route renders Failed inference and terminal failure Event", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/agents/work-unit-failed">
+      <DashboardRoutes
+        initialProjection={failedNowFixture}
+        initialAgentDetails={[failedAgentDetailFixture]}
+      />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Failed");
+  expect(markup).toContain(
+    "Failed because the final Event has terminal failure evidence.",
+  );
+  expect(markup).toContain("reported terminal failure");
+  expect(markup).toContain(
+    "Codex run failed before producing a final response.",
+  );
+  expect(markup).toContain(
+    "sessions/2026/05/27/rollout-thread-main.jsonl:4",
+  );
 });
 
 test("Projects route renders recent Projects and links to filtered Agent activity", () => {

@@ -338,6 +338,22 @@ function toSourceEvent(
     };
   }
 
+  if (recordType === "event_msg" && payloadType === "error") {
+    return {
+      sourceLocator,
+      eventType: "error",
+      observedAt,
+      metadata: pruneUndefined({
+        action: "reported terminal failure",
+        status: "failed",
+        terminal: true,
+        message: stringValue(payload.message ?? payload.error),
+        errorCode: stringValue(payload.code ?? payload.error_code),
+      }),
+      rawPayload: null,
+    };
+  }
+
   if (recordType === "event_msg" && payloadType === "token_count") {
     return {
       sourceLocator,

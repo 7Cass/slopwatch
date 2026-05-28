@@ -378,6 +378,44 @@ test("status runner prints waiting Agents in the Blocked group", async () => {
   expect(output).toContain("waiting for approval");
 });
 
+test("status runner prints terminally failed Agents in the Failed group", async () => {
+  const lines: string[] = [];
+
+  await runNowStatus({
+    nowProvider: async () =>
+      buildNowProjection({
+        now: new Date("2026-05-01T10:10:00.000Z"),
+        records: [
+          {
+            workUnitId: "work-unit-failed",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "failed",
+            confidence: 0.9,
+            explanation:
+              "Failed because the final Event has terminal failure evidence.",
+            activeTimeMs: 4 * 60 * 1000,
+            lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+            lastAction: "reported terminal failure",
+            toolCalls: 1,
+            tokenQuality: "unavailable",
+          },
+        ],
+      }),
+    writeLine: (line) => {
+      lines.push(line);
+    },
+  });
+
+  const output = lines.join("\n");
+
+  expect(output).toContain("Failed");
+  expect(output).toContain("slopwatch-demo");
+  expect(output).toContain("reported terminal failure");
+});
+
 test("status requires DATABASE_URL before reading the Now projection", async () => {
   const result = await runCli(["status"]);
 

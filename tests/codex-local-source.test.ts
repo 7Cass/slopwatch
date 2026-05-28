@@ -430,6 +430,43 @@ describe("Codex local Source adapter", () => {
     expect(waitingEvent?.event.rawPayload).toBeNull();
   });
 
+  test("normalizes Codex terminal failure records as failed Event metadata", async () => {
+    const { sourcePath } = await writeSanitizedCodexSource({
+      extraRolloutRecords: [
+        {
+          timestamp: "2026-05-27T10:03:00.000Z",
+          type: "event_msg",
+          payload: {
+            type: "error",
+            message: "Codex run failed before producing a final response.",
+            code: "runtime_error",
+          },
+        },
+      ],
+    });
+
+    const records = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: sourcePath,
+      },
+    });
+    const failureEvent = records.find(
+      (record) => record.event.sourceLocator.endsWith(":4"),
+    );
+
+    expect(failureEvent?.event.eventType).toBe("error");
+    expect(failureEvent?.event.metadata).toEqual({
+      action: "reported terminal failure",
+      status: "failed",
+      terminal: true,
+      message: "Codex run failed before producing a final response.",
+      errorCode: "runtime_error",
+    });
+    expect(failureEvent?.event.rawPayload).toBeNull();
+  });
+
   test("normalizes assistant message waits without storing message text in metadata", async () => {
     const { sourcePath } = await writeSanitizedCodexSource({
       extraRolloutRecords: [

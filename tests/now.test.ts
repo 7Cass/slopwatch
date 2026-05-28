@@ -285,4 +285,52 @@ describe("Now projection", () => {
     expect(lines.join("\n")).toContain("Blocked");
     expect(lines.join("\n")).toContain("waiting for approval");
   });
+
+  test("API and status show terminally failed Agents in the Failed group", async () => {
+    const projection = buildNowProjection({
+      now: new Date("2026-05-01T10:10:00.000Z"),
+      records: [
+        sourceRecord({
+          workUnitId: "failed",
+          state: "failed",
+          lastActivityAt: new Date("2026-05-01T10:05:00.000Z"),
+          lastAction: "reported terminal failure",
+        }),
+      ],
+    });
+    const nowProvider = async () => projection;
+    const app = createServerApp({ nowProvider });
+    const lines: string[] = [];
+
+    const response = await app.request("/api/now");
+    await runNowStatus({
+      nowProvider,
+      writeLine: (line) => {
+        lines.push(line);
+      },
+    });
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      groups: Array<{
+        key: string;
+        agents: Array<{
+          workUnitId: string;
+          state: string;
+          lastAction?: string;
+        }>;
+      }>;
+    };
+    const failedGroup = body.groups.find((group) => group.key === "failed");
+
+    expect(failedGroup?.agents).toEqual([
+      expect.objectContaining({
+        workUnitId: "failed",
+        state: "failed",
+        lastAction: "reported terminal failure",
+      }),
+    ]);
+    expect(lines.join("\n")).toContain("Failed");
+    expect(lines.join("\n")).toContain("reported terminal failure");
+  });
 });
