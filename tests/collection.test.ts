@@ -116,6 +116,33 @@ class InMemoryCollectionStore
     );
   }
 
+  async resolveDeferredForkOrigins({
+    sourceId,
+    sourceForkId,
+    originForkId,
+  }: {
+    sourceId: string;
+    sourceForkId: string;
+    originForkId: string;
+  }) {
+    for (const [forkKey, fork] of this.forks) {
+      const session = [...this.sessions.values()].find(
+        (candidate) => candidate.id === fork.sessionId,
+      );
+
+      if (
+        session?.sourceId === sourceId &&
+        fork.sourceOriginForkId === sourceForkId &&
+        !fork.originForkId
+      ) {
+        this.forks.set(forkKey, {
+          ...fork,
+          originForkId,
+        });
+      }
+    }
+  }
+
   async upsertWorkUnit(
     input: Parameters<CollectionStore["upsertWorkUnit"]>[0],
   ) {
@@ -189,6 +216,11 @@ class InMemoryCollectionStore
           (candidate) => candidate.id === fork.originForkId,
         )
       : undefined;
+    const originWorkUnit = originFork
+      ? [...this.workUnits.values()].find(
+          (candidate) => candidate.forkId === originFork.id,
+        )
+      : undefined;
 
     return {
       workUnitId,
@@ -208,7 +240,17 @@ class InMemoryCollectionStore
       forkOrigin: fork
         ? {
             sourceForkId: fork.sourceForkId,
-            originForkId: originFork?.sourceForkId ?? fork.originForkId ?? null,
+            originForkId:
+              originFork?.sourceForkId ??
+              fork.sourceOriginForkId ??
+              fork.originForkId ??
+              null,
+            originWorkUnitId: originWorkUnit?.id ?? null,
+            ...(originFork
+              ? { originStatus: "resolved" as const }
+              : fork.sourceOriginForkId
+                ? { originStatus: "unresolved" as const }
+                : {}),
           }
         : undefined,
       events: [...this.events.values()]
@@ -1332,6 +1374,133 @@ describe("collection", () => {
     expect(childFork?.originForkId).toBe(parentFork?.id);
   });
 
+  test("real Codex collection preserves unresolved Source origin when child Fork appears first", async () => {
+    const store = new InMemoryCollectionStore();
+    const [, childRecord] = codexForkRelationshipRecords();
+
+    if (!childRecord) {
+      throw new Error("Expected child Fork record.");
+    }
+
+    await collectCodexRecords({ store, records: [childRecord] });
+
+    const childWorkUnit = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-child",
+    );
+
+    if (!childWorkUnit) {
+      throw new Error("Expected child Fork WorkUnit to be persisted.");
+    }
+
+    const childDetail = await getAgentDetail({
+      store,
+      workUnitId: childWorkUnit.id,
+    });
+
+    expect(childDetail?.forkOrigin).toEqual({
+      sourceForkId: "thread-child",
+      originForkId: "thread-parent",
+      originStatus: "unresolved",
+      originWorkUnitId: null,
+    });
+  });
+
+  test("later Codex collection resolves a previously unresolved child Fork origin without rekeying the child WorkUnit", async () => {
+    const store = new InMemoryCollectionStore();
+    const [parentRecord, childRecord] = codexForkRelationshipRecords();
+
+    if (!parentRecord || !childRecord) {
+      throw new Error("Expected parent and child Fork records.");
+    }
+
+    await collectCodexRecords({ store, records: [childRecord] });
+
+    const childWorkUnitBefore = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-child",
+    );
+    const childForkBefore = findForkBySourceForkId(store, "thread-child");
+
+    if (!childWorkUnitBefore || !childForkBefore) {
+      throw new Error("Expected child Fork and WorkUnit to be persisted.");
+    }
+
+    await collectCodexRecords({ store, records: [parentRecord] });
+
+    const parentFork = findForkBySourceForkId(store, "thread-parent");
+    const parentWorkUnit = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-parent",
+    );
+    const childForkAfter = findForkBySourceForkId(store, "thread-child");
+    const childWorkUnitAfter = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-child",
+    );
+
+    expect(store.forks.size).toBe(2);
+    expect(store.workUnits.size).toBe(2);
+    expect(childForkAfter?.id).toBe(childForkBefore.id);
+    expect(childWorkUnitAfter?.id).toBe(childWorkUnitBefore.id);
+    expect(childForkAfter?.originForkId).toBe(parentFork?.id);
+
+    const childDetail = await getAgentDetail({
+      store,
+      workUnitId: childWorkUnitBefore.id,
+    });
+
+    expect(childDetail?.forkOrigin).toEqual({
+      sourceForkId: "thread-child",
+      originForkId: "thread-parent",
+      originStatus: "resolved",
+      originWorkUnitId: parentWorkUnit?.id,
+    });
+  });
+
+  test("rerunning deferred Fork origin collection remains idempotent after resolution", async () => {
+    const store = new InMemoryCollectionStore();
+    const [parentRecord, childRecord] = codexForkRelationshipRecords();
+
+    if (!parentRecord || !childRecord) {
+      throw new Error("Expected parent and child Fork records.");
+    }
+
+    await collectCodexRecords({ store, records: [childRecord] });
+    await collectCodexRecords({ store, records: [parentRecord] });
+
+    const forkIds = [...store.forks.values()].map((fork) => fork.id);
+    const workUnitIds = [...store.workUnits.values()].map(
+      (workUnit) => workUnit.id,
+    );
+    const eventIds = [...store.events.values()].map((event) => event.id);
+    const childWorkUnit = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-child",
+    );
+    const parentFork = findForkBySourceForkId(store, "thread-parent");
+
+    await collectCodexRecords({ store, records: [childRecord] });
+    await collectCodexRecords({ store, records: [parentRecord] });
+
+    expect([...store.forks.values()].map((fork) => fork.id)).toEqual(forkIds);
+    expect([...store.workUnits.values()].map((workUnit) => workUnit.id)).toEqual(
+      workUnitIds,
+    );
+    expect([...store.events.values()].map((event) => event.id)).toEqual(
+      eventIds,
+    );
+    expect(store.forks.size).toBe(2);
+    expect(store.workUnits.size).toBe(2);
+    expect(store.events.size).toBe(2);
+    expect(findWorkUnitByIdentityKey(store, "codex-local:default:thread-child")?.id).toBe(
+      childWorkUnit?.id,
+    );
+    expect(findForkBySourceForkId(store, "thread-child")?.originForkId).toBe(
+      parentFork?.id,
+    );
+  });
+
   test("linked Codex Forks remain separate Now Agents and child detail maps the Source relationship", async () => {
     const store = new InMemoryCollectionStore();
     const records = codexForkRelationshipRecords();
@@ -1371,6 +1540,11 @@ describe("collection", () => {
     expect(childDetail?.forkOrigin).toEqual({
       sourceForkId: "thread-child",
       originForkId: "thread-parent",
+      originStatus: "resolved",
+      originWorkUnitId: findWorkUnitByIdentityKey(
+        store,
+        "codex-local:default:thread-parent",
+      )?.id,
     });
     expect(childDetail?.events[0]?.source.sourceLocator).toBe(
       "sessions/2026/05/27/rollout-thread-child.jsonl:1",

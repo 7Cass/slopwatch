@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
 import postgres, { type Sql } from "postgres";
 
@@ -102,6 +102,7 @@ export class PostgresCollectionStore implements CollectionStore {
       .values({
         sessionId: input.sessionId,
         sourceForkId: input.sourceForkId,
+        sourceOriginForkId: input.sourceOriginForkId ?? null,
         originForkId: input.originForkId ?? null,
         startedAt: input.startedAt ?? null,
         lastObservedAt: input.lastObservedAt ?? null,
@@ -109,6 +110,7 @@ export class PostgresCollectionStore implements CollectionStore {
       .onConflictDoUpdate({
         target: [forks.sessionId, forks.sourceForkId],
         set: {
+          sourceOriginForkId: input.sourceOriginForkId ?? null,
           originForkId: input.originForkId ?? null,
           startedAt: input.startedAt ?? null,
           lastObservedAt: input.lastObservedAt ?? null,
@@ -132,6 +134,7 @@ export class PostgresCollectionStore implements CollectionStore {
         id: forks.id,
         sessionId: forks.sessionId,
         sourceForkId: forks.sourceForkId,
+        sourceOriginForkId: forks.sourceOriginForkId,
         originForkId: forks.originForkId,
         startedAt: forks.startedAt,
         lastObservedAt: forks.lastObservedAt,
@@ -147,6 +150,35 @@ export class PostgresCollectionStore implements CollectionStore {
       .limit(1);
 
     return fork ?? null;
+  }
+
+  async resolveDeferredForkOrigins({
+    sourceId,
+    sourceForkId,
+    originForkId,
+  }: {
+    sourceId: string;
+    sourceForkId: string;
+    originForkId: string;
+  }): Promise<void> {
+    const sourceSessions = this.database
+      .select({ id: sessions.id })
+      .from(sessions)
+      .where(eq(sessions.sourceId, sourceId));
+
+    await this.database
+      .update(forks)
+      .set({
+        originForkId,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          inArray(forks.sessionId, sourceSessions),
+          eq(forks.sourceOriginForkId, sourceForkId),
+          isNull(forks.originForkId),
+        ),
+      );
   }
 
   async upsertWorkUnit(

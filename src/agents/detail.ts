@@ -32,6 +32,8 @@ export type AgentDetailRecord = {
   forkOrigin?: {
     sourceForkId: string;
     originForkId?: string | null;
+    originStatus?: "resolved" | "unresolved";
+    originWorkUnitId?: string | null;
   };
   events: AgentDetailEventRecord[];
 };
@@ -72,6 +74,8 @@ export type AgentDetail = {
   forkOrigin?: {
     sourceForkId: string;
     originForkId?: string | null;
+    originStatus?: "resolved" | "unresolved";
+    originWorkUnitId?: string | null;
   };
   events: AgentDetailEvent[];
 };

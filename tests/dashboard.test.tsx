@@ -211,6 +211,8 @@ const agentDetailFixture: SerializedAgentDetail = {
   forkOrigin: {
     sourceForkId: "fork-main",
     originForkId: "fork-root",
+    originStatus: "resolved",
+    originWorkUnitId: "work-unit-root",
   },
   events: [
     {
@@ -250,6 +252,17 @@ const agentDetailFixture: SerializedAgentDetail = {
       rawPayload: "full assistant response text",
     },
   ],
+};
+
+const unresolvedOriginAgentDetailFixture: SerializedAgentDetail = {
+  ...agentDetailFixture,
+  workUnitId: "work-unit-child-unresolved",
+  forkOrigin: {
+    sourceForkId: "thread-child",
+    originForkId: "thread-parent",
+    originStatus: "unresolved",
+    originWorkUnitId: null,
+  },
 };
 
 const projectsFixture: SerializedProjectsOverview = {
@@ -467,8 +480,27 @@ test("Agent detail route renders timeline metadata and keeps Raw payload hidden 
   expect(markup).toContain("Derived from recent tool and message Events.");
   expect(markup).toContain("Fork origin");
   expect(markup).toContain("fork-root");
+  expect(markup).toContain("Linked");
+  expect(markup).toContain('href="/agents/work-unit-root"');
   expect(markup).toContain("estimated");
   expect(markup).toContain("42");
   expect(markup).toContain("Show Raw payload");
   expect(markup).not.toContain("full assistant response text");
+});
+
+test("Agent detail route renders unresolved Fork origin information without an origin Agent link", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/agents/work-unit-child-unresolved">
+      <DashboardRoutes
+        initialProjection={nowFixture}
+        initialAgentDetails={[unresolvedOriginAgentDetailFixture]}
+      />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Fork origin");
+  expect(markup).toContain("thread-child");
+  expect(markup).toContain("thread-parent");
+  expect(markup).toContain("Unresolved");
+  expect(markup).not.toContain('href="/agents/thread-parent"');
 });

@@ -109,6 +109,8 @@ export type SerializedAgentDetail = {
   forkOrigin?: {
     sourceForkId: string;
     originForkId?: string | null;
+    originStatus?: "resolved" | "unresolved";
+    originWorkUnitId?: string | null;
   };
   events: SerializedAgentDetailEvent[];
 };
@@ -777,15 +779,35 @@ function ForkOriginPanel({
 }: {
   fork: NonNullable<SerializedAgentDetail["forkOrigin"]>;
 }) {
+  const originLabel = fork.originForkId ?? "Origin not recorded";
+  const originStatus =
+    fork.originStatus === "resolved"
+      ? "Linked"
+      : fork.originStatus === "unresolved"
+        ? "Unresolved"
+        : "Not recorded";
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-4">
       <h2 className="text-base font-semibold text-slate-950">Fork origin</h2>
-      <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+      <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3">
         <Metric label="Fork" value={fork.sourceForkId} />
-        <Metric
-          label="Origin"
-          value={fork.originForkId ?? "Origin not recorded"}
-        />
+        <div className="min-w-0">
+          <dt className="truncate">Origin</dt>
+          <dd className="mt-0.5 truncate font-medium text-slate-800">
+            {fork.originWorkUnitId ? (
+              <Link
+                className="text-slate-950 underline decoration-slate-300 underline-offset-4 hover:decoration-slate-600"
+                to={`/agents/${encodeURIComponent(fork.originWorkUnitId)}`}
+              >
+                {originLabel}
+              </Link>
+            ) : (
+              originLabel
+            )}
+          </dd>
+        </div>
+        <Metric label="Status" value={originStatus} />
       </dl>
     </section>
   );

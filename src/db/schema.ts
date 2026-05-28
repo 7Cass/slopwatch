@@ -68,6 +68,7 @@ export const forks = pgTable(
       .notNull()
       .references(() => sessions.id),
     sourceForkId: text("source_fork_id").notNull(),
+    sourceOriginForkId: text("source_origin_fork_id"),
     originForkId: uuid("origin_fork_id"),
     startedAt: timestamp("started_at", { withTimezone: true }),
     lastObservedAt: timestamp("last_observed_at", { withTimezone: true }),
@@ -78,6 +79,9 @@ export const forks = pgTable(
       table.sessionId,
       table.sourceForkId,
     ),
+    sourceOrigin: index("slopwatch_forks_source_origin_idx")
+      .on(table.sourceOriginForkId)
+      .where(sql`${table.sourceOriginForkId} IS NOT NULL`),
   }),
 );
 

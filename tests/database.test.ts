@@ -59,3 +59,14 @@ test("initial migration stores versioned WorkUnit Inference fields", async () =>
     expect(migrationSql).toContain(column);
   }
 });
+
+test("deferred Fork origin migration stores unresolved Source origin identities", async () => {
+  const migrationSql = await Bun.file(
+    join(defaultMigrationsFolder, "0001_deferred_fork_origins.sql"),
+  ).text();
+
+  expect(migrationSql).toContain(
+    "ADD COLUMN IF NOT EXISTS source_origin_fork_id text",
+  );
+  expect(migrationSql).toContain("slopwatch_forks_source_origin_idx");
+});

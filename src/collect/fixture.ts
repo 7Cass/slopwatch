@@ -38,6 +38,7 @@ export type StoredFork = {
   id: string;
   sessionId: string;
   sourceForkId: string;
+  sourceOriginForkId?: string | null;
   originForkId?: string | null;
   startedAt?: Date | null;
   lastObservedAt?: Date | null;
@@ -78,6 +79,11 @@ export type CollectionStore = {
     sourceId: string;
     sourceForkId: string;
   }) => Promise<StoredFork | null>;
+  resolveDeferredForkOrigins: (input: {
+    sourceId: string;
+    sourceForkId: string;
+    originForkId: string;
+  }) => Promise<void>;
   upsertWorkUnit: (
     input: Omit<StoredWorkUnit, "id">,
   ) => Promise<StoredWorkUnit>;
@@ -167,8 +173,14 @@ export async function collectSourceRecords({
 
     const fork = await store.upsertFork({
       ...record.fork,
+      sourceOriginForkId: record.fork.originForkId ?? null,
       originForkId: null,
       sessionId: session.id,
+    });
+    await store.resolveDeferredForkOrigins({
+      sourceId: source.id,
+      sourceForkId: fork.sourceForkId,
+      originForkId: fork.id,
     });
 
     forkIdsBySourceIdentity.set(
@@ -190,8 +202,14 @@ export async function collectSourceRecords({
     });
     const fork = await store.upsertFork({
       ...record.fork,
+      sourceOriginForkId: record.fork.originForkId ?? null,
       originForkId,
       sessionId: session.id,
+    });
+    await store.resolveDeferredForkOrigins({
+      sourceId: source.id,
+      sourceForkId: fork.sourceForkId,
+      originForkId: fork.id,
     });
     const workUnit = await store.upsertWorkUnit({
       ...record.workUnit,

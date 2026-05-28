@@ -17,6 +17,7 @@ import type {
 } from "./detail";
 
 const originForks = alias(forks, "origin_forks");
+const originWorkUnits = alias(workUnits, "origin_work_units");
 
 export class PostgresAgentDetailStore implements AgentDetailStore {
   constructor(
@@ -40,14 +41,17 @@ export class PostgresAgentDetailStore implements AgentDetailStore {
         inferenceVersion: inferences.inferenceVersion,
         calculatedAt: inferences.calculatedAt,
         sourceForkId: forks.sourceForkId,
+        sourceOriginForkId: forks.sourceOriginForkId,
         originForkId: forks.originForkId,
         originSourceForkId: originForks.sourceForkId,
+        originWorkUnitId: originWorkUnits.id,
       })
       .from(workUnits)
       .innerJoin(projects, eq(workUnits.projectId, projects.id))
       .innerJoin(inferences, eq(inferences.workUnitId, workUnits.id))
       .leftJoin(forks, eq(workUnits.forkId, forks.id))
       .leftJoin(originForks, eq(forks.originForkId, originForks.id))
+      .leftJoin(originWorkUnits, eq(originWorkUnits.forkId, originForks.id))
       .where(eq(workUnits.id, workUnitId))
       .limit(1);
 
@@ -91,7 +95,16 @@ export class PostgresAgentDetailStore implements AgentDetailStore {
         ? {
             sourceForkId: workUnit.sourceForkId,
             originForkId:
-              workUnit.originSourceForkId ?? workUnit.originForkId ?? null,
+              workUnit.sourceOriginForkId ??
+              workUnit.originSourceForkId ??
+              workUnit.originForkId ??
+              null,
+            originStatus: workUnit.originForkId
+              ? "resolved"
+              : workUnit.sourceOriginForkId
+                ? "unresolved"
+              : undefined,
+            originWorkUnitId: workUnit.originWorkUnitId ?? null,
           }
         : undefined,
       events: eventRows.map((event) => ({
