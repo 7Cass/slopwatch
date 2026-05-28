@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 
 import { Database } from "bun:sqlite";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { readCodexLocalSourceRecords } from "../src/collect/codex-local";
@@ -26,10 +26,12 @@ afterEach(async () => {
 });
 
 async function writeSanitizedCodexSource({
+  cwd = "/projects/slopwatch-demo",
   extraRolloutRecords = [],
   threadId = "thread-main",
   parentThreadId,
 }: {
+  cwd?: string;
   extraRolloutRecords?: unknown[];
   threadId?: string;
   parentThreadId?: string;
@@ -113,7 +115,7 @@ async function writeSanitizedCodexSource({
       1779876120,
       "cli",
       "openai",
-      "/projects/slopwatch-demo",
+      cwd,
       "Sanitized collection run",
       "workspace-write",
       "on-request",
@@ -150,7 +152,7 @@ async function writeSanitizedCodexSource({
         payload: {
           id: threadId,
           timestamp: "2026-05-27T10:00:00.000Z",
-          cwd: "/projects/slopwatch-demo",
+          cwd,
           cli_version: "0.134.0",
           source: "cli",
           thread_source: "user",
@@ -187,6 +189,124 @@ async function writeSanitizedCodexSource({
 }
 
 describe("Codex local Source adapter", () => {
+  test("resolves nested Codex working directories to the Git root Project", async () => {
+    const projectRoot = await tempCodexSource();
+    const apiCwd = join(projectRoot, "apps", "api");
+    const webCwd = join(projectRoot, "packages", "web");
+
+    await mkdir(join(projectRoot, ".git"), { recursive: true });
+    await mkdir(apiCwd, { recursive: true });
+    await mkdir(webCwd, { recursive: true });
+
+    const firstSource = await writeSanitizedCodexSource({
+      cwd: apiCwd,
+      threadId: "thread-api",
+    });
+    const secondSource = await writeSanitizedCodexSource({
+      cwd: webCwd,
+      threadId: "thread-web",
+    });
+
+    const firstRecords = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: firstSource.sourcePath,
+      },
+    });
+    const secondRecords = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: secondSource.sourcePath,
+      },
+    });
+
+    expect(firstRecords[0]?.project).toEqual({
+      projectKey: `local:${projectRoot}`,
+      rootPath: projectRoot,
+      displayName: basename(projectRoot),
+    });
+    expect(secondRecords[0]?.project).toEqual(firstRecords[0]?.project);
+    expect(firstRecords[0]?.event.metadata).toMatchObject({ cwd: apiCwd });
+    expect(secondRecords[0]?.event.metadata).toMatchObject({ cwd: webCwd });
+  });
+
+  test("falls back to the observed starting working directory without Git", async () => {
+    const nonGitRoot = await tempCodexSource();
+    const observedCwd = join(nonGitRoot, "one-off", "scratch");
+
+    await mkdir(observedCwd, { recursive: true });
+
+    const { sourcePath } = await writeSanitizedCodexSource({
+      cwd: observedCwd,
+    });
+
+    const records = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: sourcePath,
+      },
+    });
+
+    expect(records[0]?.project).toEqual({
+      projectKey: `local:${observedCwd}`,
+      rootPath: observedCwd,
+      displayName: basename(observedCwd),
+    });
+  });
+
+  test("keeps external file touches as Event metadata without rekeying the Project", async () => {
+    const projectRoot = await tempCodexSource();
+    const observedCwd = join(projectRoot, "src", "app");
+    const externalRoot = await tempCodexSource();
+    const externalFilePath = join(externalRoot, "notes.txt");
+
+    await mkdir(join(projectRoot, ".git"), { recursive: true });
+    await mkdir(observedCwd, { recursive: true });
+
+    const { sourcePath } = await writeSanitizedCodexSource({
+      cwd: observedCwd,
+      extraRolloutRecords: [
+        {
+          timestamp: "2026-05-27T10:03:00.000Z",
+          type: "response_item",
+          payload: {
+            type: "function_call",
+            name: "edit",
+            call_id: "call-external-file",
+            arguments: JSON.stringify({
+              path: externalFilePath,
+            }),
+          },
+        },
+      ],
+    });
+
+    const records = await readCodexLocalSourceRecords({
+      source: {
+        sourceKey: "codex-local:default",
+        sourceType: "codex-local",
+        path: sourcePath,
+      },
+    });
+    const fileTouch = records.find(
+      (record) => record.event.sourceLocator.endsWith(":4"),
+    );
+
+    expect(fileTouch?.project).toEqual({
+      projectKey: `local:${projectRoot}`,
+      rootPath: projectRoot,
+      displayName: basename(projectRoot),
+    });
+    expect(fileTouch?.event.metadata).toMatchObject({
+      action: "called tool",
+      toolName: "edit",
+      filePath: externalFilePath,
+    });
+  });
+
   test("normalizes sanitized real-format rollout records with stable Source locators and identity", async () => {
     const { sourcePath, rolloutRelativePath } =
       await writeSanitizedCodexSource();

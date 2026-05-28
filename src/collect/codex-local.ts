@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { readFile } from "node:fs/promises";
-import { basename, join, relative } from "node:path";
+import { readFile, stat } from "node:fs/promises";
+import { basename, dirname, join, relative } from "node:path";
 
 import type { SourceConfig } from "../config/runtime";
 import type { SourceRecord } from "./fixture";
@@ -81,7 +81,9 @@ export async function readCodexLocalSourceRecords({
       parsedEvents.map((event) => event.observedAt),
       dateFromMs(thread.updated_at_ms),
     );
-    const projectRoot = thread.cwd || normalizedSource.path;
+    const projectRoot = thread.cwd
+      ? await resolveProjectRoot(thread.cwd)
+      : normalizedSource.path;
     const commonSource = {
       sourceKey: normalizedSource.sourceKey,
       sourceType: normalizedSource.sourceType,
@@ -289,13 +291,14 @@ function toSourceEvent(
       sourceLocator,
       eventType: "tool_call",
       observedAt,
-      metadata: {
+      metadata: pruneUndefined({
         action: "called tool",
         toolName: stringValue(payload.name),
         callId: stringValue(payload.call_id),
         command: stringValue(argumentsMetadata.cmd ?? argumentsMetadata.command),
+        ...fileTouchMetadata(argumentsMetadata),
         toolCalls: 1,
-      },
+      }),
       rawPayload: null,
     };
   }
@@ -473,6 +476,33 @@ function parseFunctionArguments(value: unknown): Record<string, unknown> {
   }
 }
 
+function fileTouchMetadata(argumentsMetadata: Record<string, unknown>) {
+  return pruneUndefined({
+    filePath: stringValue(
+      argumentsMetadata.filePath ??
+        argumentsMetadata.path ??
+        argumentsMetadata.file,
+    ),
+    filesTouched: stringArrayValue(
+      argumentsMetadata.filesTouched ??
+        argumentsMetadata.filePaths ??
+        argumentsMetadata.files,
+    ),
+  });
+}
+
+function stringArrayValue(value: unknown) {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const strings = value.filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+
+  return strings.length > 0 ? strings : undefined;
+}
+
 function normalizeSource(source: SourceConfig): Required<SourceConfig> {
   return {
     sourceKey: source.sourceKey ?? `${source.sourceType}:${source.path}`,
@@ -485,6 +515,40 @@ function absoluteRolloutPath(sourcePath: string, thread: CodexThreadRow) {
   return thread.rollout_path.startsWith("/")
     ? thread.rollout_path
     : join(sourcePath, thread.rollout_path);
+}
+
+async function resolveProjectRoot(observedCwd: string) {
+  const gitRoot = await findGitRoot(observedCwd);
+
+  return gitRoot ?? observedCwd;
+}
+
+async function findGitRoot(startPath: string): Promise<string | null> {
+  let currentPath = startPath;
+
+  while (true) {
+    if (await hasGitMarker(currentPath)) {
+      return currentPath;
+    }
+
+    const parentPath = dirname(currentPath);
+
+    if (parentPath === currentPath) {
+      return null;
+    }
+
+    currentPath = parentPath;
+  }
+}
+
+async function hasGitMarker(path: string) {
+  try {
+    const gitMarker = await stat(join(path, ".git"));
+
+    return gitMarker.isDirectory() || gitMarker.isFile();
+  } catch {
+    return false;
+  }
 }
 
 function earliestDate(dates: Array<Date | null>, fallback: Date | null): Date {
