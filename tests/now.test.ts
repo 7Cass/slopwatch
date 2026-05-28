@@ -31,6 +31,7 @@ function sourceRecord(
     lastAction: overrides.lastAction ?? "reported progress",
     toolCalls: overrides.toolCalls ?? 0,
     tokenQuality: overrides.tokenQuality ?? "unavailable",
+    forkOrigin: overrides.forkOrigin,
   };
 }
 
@@ -73,6 +74,53 @@ describe("Now projection", () => {
         (agent) => agent.workUnitId,
       ),
     ).toEqual(["active-newer", "active-older"]);
+  });
+
+  test("includes resolved Fork origin presentation data without changing Agent grouping", () => {
+    const projection = buildNowProjection({
+      now: new Date("2026-05-01T10:10:00.000Z"),
+      records: [
+        sourceRecord({
+          workUnitId: "origin-work-unit",
+          state: "active",
+          lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+        }),
+        sourceRecord({
+          workUnitId: "child-work-unit",
+          state: "blocked",
+          lastActivityAt: new Date("2026-05-01T10:05:00.000Z"),
+          forkOrigin: {
+            originWorkUnitId: "origin-work-unit",
+            originProject: {
+              displayName: "origin project",
+              rootPath: "/projects/origin",
+            },
+          },
+        }),
+      ],
+    });
+
+    const activeAgents =
+      projection.groups.find((group) => group.key === "active")?.agents ?? [];
+    const blockedAgents =
+      projection.groups.find((group) => group.key === "blocked")?.agents ?? [];
+
+    expect(activeAgents.map((agent) => agent.workUnitId)).toEqual([
+      "origin-work-unit",
+    ]);
+    expect(blockedAgents).toEqual([
+      expect.objectContaining({
+        workUnitId: "child-work-unit",
+        state: "blocked",
+        forkOrigin: {
+          originWorkUnitId: "origin-work-unit",
+          originProject: {
+            displayName: "origin project",
+            rootPath: "/projects/origin",
+          },
+        },
+      }),
+    ]);
   });
 
   test("derives Recently finished from Finished WorkUnits inside the recency window", () => {

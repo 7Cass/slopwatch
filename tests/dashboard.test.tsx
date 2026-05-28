@@ -46,6 +46,62 @@ const nowFixture: SerializedNowProjection = {
   ],
 };
 
+const forkLinkedNowFixture: SerializedNowProjection = {
+  generatedAt: "2026-05-01T10:10:00.000Z",
+  groups: [
+    {
+      key: "blocked",
+      agents: [],
+    },
+    {
+      key: "active",
+      agents: [
+        {
+          workUnitId: "origin-agent",
+          project: {
+            displayName: "slopwatch-demo",
+            rootPath: "/projects/slopwatch-demo",
+          },
+          state: "active",
+          activeTimeMs: 240000,
+          lastActivityAt: "2026-05-01T10:04:00.000Z",
+          lastAction: "reported progress",
+          toolCalls: 3,
+          tokenQuality: "estimated",
+        },
+        {
+          workUnitId: "work-unit-child",
+          project: {
+            displayName: "slopwatch-demo",
+            rootPath: "/projects/slopwatch-demo",
+          },
+          state: "active",
+          activeTimeMs: 180000,
+          lastActivityAt: "2026-05-01T10:05:00.000Z",
+          lastAction: "waiting for tests",
+          toolCalls: 2,
+          tokenQuality: "estimated",
+          forkOrigin: {
+            originWorkUnitId: "origin-internal-id",
+            originProject: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+          },
+        },
+      ],
+    },
+    {
+      key: "failed",
+      agents: [],
+    },
+    {
+      key: "recently_finished",
+      agents: [],
+    },
+  ],
+};
+
 const blockedNowFixture: SerializedNowProjection = {
   generatedAt: "2026-05-01T10:10:00.000Z",
   groups: [
@@ -344,6 +400,21 @@ test("Now screen renders a fixture-backed Agent card", () => {
   expect(markup).toContain("estimated tokens");
   expect(markup).toContain('href="/agents/work-unit-1"');
   expect(markup).not.toContain("/projects/slopwatch-demo");
+});
+
+test("Now screen renders a compact Fork origin indicator on child Agent cards", () => {
+  const markup = renderToStaticMarkup(
+    <StaticRouter location="/">
+      <DashboardRoutes initialProjection={forkLinkedNowFixture} />
+    </StaticRouter>,
+  );
+
+  expect(markup).toContain("Fork of slopwatch-demo");
+  expect(markup).toContain('href="/agents/origin-agent"');
+  expect(markup).toContain('href="/agents/work-unit-child"');
+  expect(markup).not.toContain("origin-internal-id");
+  expect(markup).not.toContain("thread-parent");
+  expect(markup).not.toContain("thread-child");
 });
 
 test("Now screen renders waiting Agents in the Blocked group", () => {

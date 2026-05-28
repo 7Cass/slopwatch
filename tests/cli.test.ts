@@ -340,6 +340,71 @@ test("status runner prints the shared Now projection", async () => {
   expect(lines.join("\n")).not.toContain("detail-only field");
 });
 
+test("status runner keeps origin and child Fork Agents on separate concise lines", async () => {
+  const lines: string[] = [];
+
+  await runNowStatus({
+    nowProvider: async () =>
+      buildNowProjection({
+        now: new Date("2026-05-01T10:10:00.000Z"),
+        records: [
+          {
+            workUnitId: "origin-agent",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "active",
+            confidence: 0.7,
+            explanation: "origin detail-only field",
+            activeTimeMs: 5 * 60 * 1000,
+            lastActivityAt: new Date("2026-05-01T10:04:00.000Z"),
+            lastAction: "origin reported progress",
+            toolCalls: 2,
+            tokenQuality: "estimated",
+          },
+          {
+            workUnitId: "child-agent",
+            project: {
+              displayName: "slopwatch-demo",
+              rootPath: "/projects/slopwatch-demo",
+            },
+            state: "active",
+            confidence: 0.8,
+            explanation: "child detail-only field",
+            activeTimeMs: 3 * 60 * 1000,
+            lastActivityAt: new Date("2026-05-01T10:05:00.000Z"),
+            lastAction: "child waiting for tests",
+            toolCalls: 1,
+            tokenQuality: "estimated",
+            forkOrigin: {
+              originWorkUnitId: "origin-internal-id",
+              originProject: {
+                displayName: "slopwatch-demo",
+                rootPath: "/projects/slopwatch-demo",
+              },
+            },
+          },
+        ],
+      }),
+    writeLine: (line) => {
+      lines.push(line);
+    },
+  });
+
+  const output = lines.join("\n");
+  const agentLines = output
+    .split("\n")
+    .filter((line) => line.startsWith("- "));
+
+  expect(agentLines).toHaveLength(2);
+  expect(agentLines[0]).toContain("child waiting for tests");
+  expect(agentLines[1]).toContain("origin reported progress");
+  expect(output).not.toContain("origin-internal-id");
+  expect(output).not.toContain("thread-parent");
+  expect(output).not.toContain("thread-child");
+});
+
 test("status runner prints waiting Agents in the Blocked group", async () => {
   const lines: string[] = [];
 

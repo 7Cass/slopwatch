@@ -3,6 +3,7 @@ import {
   ArrowLeft,
   CircleCheck,
   CircleDot,
+  GitFork,
   OctagonX,
 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
@@ -18,7 +19,11 @@ import { Badge, type BadgeProps } from "./components/ui/badge";
 import { Card, CardContent, CardHeader } from "./components/ui/card";
 import { connectToNowEvents } from "./now-stream";
 import type { SourceHealthStatus, SourceReport } from "../admin/sources";
-import type { NowGroupKey, TokenQuality } from "../now/projection";
+import type {
+  NowForkOriginPresentation,
+  NowGroupKey,
+  TokenQuality,
+} from "../now/projection";
 import type { WorkUnitState } from "../infer/work-unit";
 
 export type SerializedNowAgentCard = {
@@ -33,6 +38,7 @@ export type SerializedNowAgentCard = {
   lastAction?: string;
   toolCalls?: number;
   tokenQuality: TokenQuality;
+  forkOrigin?: NowForkOriginPresentation;
 };
 
 export type SerializedNowProjectionGroup = {
@@ -600,6 +606,14 @@ function AgentCard({
               <p className="mt-1 line-clamp-2 text-sm text-slate-600">
                 {agent.lastAction ?? "No recent action"}
               </p>
+              {agent.forkOrigin ? (
+                <p className="mt-2 flex min-w-0 items-center gap-1.5 text-xs font-medium text-slate-500">
+                  <GitFork aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                  <span className="truncate">
+                    Fork of {agent.forkOrigin.originProject.displayName}
+                  </span>
+                </p>
+              ) : null}
             </div>
             <Badge variant={stateTone[groupKey].badge}>
               {groupLabels[groupKey]}

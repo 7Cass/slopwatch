@@ -298,6 +298,27 @@ class InMemoryCollectionStore
         throw new Error("Expected WorkUnit projection dependencies.");
       }
 
+      const fork = workUnit.forkId
+        ? [...this.forks.values()].find(
+            (candidate) => candidate.id === workUnit.forkId,
+          )
+        : undefined;
+      const originFork = fork?.originForkId
+        ? [...this.forks.values()].find(
+            (candidate) => candidate.id === fork.originForkId,
+          )
+        : undefined;
+      const originWorkUnit = originFork
+        ? [...this.workUnits.values()].find(
+            (candidate) => candidate.forkId === originFork.id,
+          )
+        : undefined;
+      const originProject = originWorkUnit
+        ? [...this.projects.values()].find(
+            (candidate) => candidate.id === originWorkUnit.projectId,
+          )
+        : undefined;
+
       return {
         workUnitId: workUnit.id,
         project: {
@@ -316,6 +337,16 @@ class InMemoryCollectionStore
           readString(latestEvent?.metadata.action) ?? latestEvent?.eventType,
         toolCalls: readNumber(latestEvent?.metadata.toolCalls),
         tokenQuality: readTokenQuality(latestEvent?.metadata.tokenQuality),
+        forkOrigin:
+          originWorkUnit && originProject
+            ? {
+                originWorkUnitId: originWorkUnit.id,
+                originProject: {
+                  displayName: originProject.displayName,
+                  rootPath: originProject.rootPath,
+                },
+              }
+            : undefined,
       };
     });
   }
@@ -1527,10 +1558,25 @@ describe("collection", () => {
       store,
       "codex-local:default:thread-child",
     );
+    const parentWorkUnit = findWorkUnitByIdentityKey(
+      store,
+      "codex-local:default:thread-parent",
+    );
 
-    if (!childWorkUnit) {
+    if (!childWorkUnit || !parentWorkUnit) {
       throw new Error("Expected child Fork WorkUnit to be persisted.");
     }
+
+    expect(
+      activeAgents.find((agent) => agent.workUnitId === childWorkUnit.id)
+        ?.forkOrigin,
+    ).toEqual({
+      originWorkUnitId: parentWorkUnit.id,
+      originProject: {
+        displayName: "slopwatch-demo",
+        rootPath: "/projects/slopwatch-demo",
+      },
+    });
 
     const childDetail = await getAgentDetail({
       store,
@@ -1541,10 +1587,7 @@ describe("collection", () => {
       sourceForkId: "thread-child",
       originForkId: "thread-parent",
       originStatus: "resolved",
-      originWorkUnitId: findWorkUnitByIdentityKey(
-        store,
-        "codex-local:default:thread-parent",
-      )?.id,
+      originWorkUnitId: parentWorkUnit.id,
     });
     expect(childDetail?.events[0]?.source.sourceLocator).toBe(
       "sessions/2026/05/27/rollout-thread-child.jsonl:1",

@@ -1,13 +1,18 @@
 import { desc, eq } from "drizzle-orm";
 import { drizzle, type PostgresJsDatabase } from "drizzle-orm/postgres-js";
+import { alias } from "drizzle-orm/pg-core";
 import postgres, { type Sql } from "postgres";
 
-import { events, inferences, projects, workUnits } from "../db/schema";
+import { events, forks, inferences, projects, workUnits } from "../db/schema";
 import type {
   NowProjectionSourceRecord,
   NowProjectionStore,
   TokenQuality,
 } from "./projection";
+
+const originForks = alias(forks, "origin_forks");
+const originWorkUnits = alias(workUnits, "origin_work_units");
+const originProjects = alias(projects, "origin_projects");
 
 export class PostgresNowProjectionStore implements NowProjectionStore {
   constructor(
@@ -27,10 +32,17 @@ export class PostgresNowProjectionStore implements NowProjectionStore {
         explanation: inferences.explanation,
         activeTimeMs: inferences.activeTimeMs,
         calculatedAt: inferences.calculatedAt,
+        originWorkUnitId: originWorkUnits.id,
+        originProjectDisplayName: originProjects.displayName,
+        originProjectRootPath: originProjects.rootPath,
       })
       .from(workUnits)
       .innerJoin(projects, eq(workUnits.projectId, projects.id))
       .innerJoin(inferences, eq(inferences.workUnitId, workUnits.id))
+      .leftJoin(forks, eq(workUnits.forkId, forks.id))
+      .leftJoin(originForks, eq(forks.originForkId, originForks.id))
+      .leftJoin(originWorkUnits, eq(originWorkUnits.forkId, originForks.id))
+      .leftJoin(originProjects, eq(originWorkUnits.projectId, originProjects.id))
       .orderBy(desc(workUnits.lastObservedAt));
 
     return Promise.all(
@@ -55,6 +67,18 @@ export class PostgresNowProjectionStore implements NowProjectionStore {
           lastAction: readString(metadata?.action) ?? latestEvent?.eventType,
           toolCalls: readNumber(metadata?.toolCalls),
           tokenQuality: readTokenQuality(metadata?.tokenQuality),
+          forkOrigin:
+            row.originWorkUnitId &&
+            row.originProjectDisplayName &&
+            row.originProjectRootPath
+              ? {
+                  originWorkUnitId: row.originWorkUnitId,
+                  originProject: {
+                    displayName: row.originProjectDisplayName,
+                    rootPath: row.originProjectRootPath,
+                  },
+                }
+              : undefined,
         };
       }),
     );

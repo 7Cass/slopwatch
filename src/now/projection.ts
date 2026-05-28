@@ -8,6 +8,14 @@ export type NowGroupKey =
 
 export type TokenQuality = "real" | "estimated" | "unavailable";
 
+export type NowForkOriginPresentation = {
+  originWorkUnitId: string;
+  originProject: {
+    displayName: string;
+    rootPath: string;
+  };
+};
+
 export type NowProjectionSourceRecord = {
   workUnitId: string;
   project: {
@@ -22,6 +30,7 @@ export type NowProjectionSourceRecord = {
   lastAction?: string;
   toolCalls?: number;
   tokenQuality?: TokenQuality;
+  forkOrigin?: NowForkOriginPresentation;
 };
 
 export type NowAgentCard = {
@@ -36,6 +45,7 @@ export type NowAgentCard = {
   lastAction?: string;
   toolCalls?: number;
   tokenQuality: TokenQuality;
+  forkOrigin?: NowForkOriginPresentation;
 };
 
 export type NowProjectionGroup = {
@@ -175,6 +185,7 @@ function toAgentCard(record: NowProjectionSourceRecord): NowAgentCard {
     lastAction: record.lastAction,
     toolCalls: record.toolCalls,
     tokenQuality: record.tokenQuality ?? "unavailable",
+    forkOrigin: record.forkOrigin,
   };
 }
 
